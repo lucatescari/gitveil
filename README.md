@@ -222,6 +222,20 @@ gitveil export-key -k team-backend ~/backend-key
 - **Encrypted files are opaque blobs.** Git cannot compute deltas on encrypted content, so storage efficiency is reduced for encrypted files.
 - **No key rotation or revocation.** Removing a collaborator's GPG key does not re-encrypt with a new symmetric key. They still have the old key.
 
+## Security Considerations
+
+### No ciphertext integrity verification
+
+AES-256-CTR provides confidentiality but not integrity. An attacker with push access to the repository can flip bits in the ciphertext, which flips the corresponding bits in the plaintext. The HMAC-SHA1 is used only for deterministic nonce derivation, not for authentication. There is no tamper detection on decryption. This is inherited from git-crypt's design -- adding MAC verification would break compatibility.
+
+### Trust model for `gpg.program`
+
+Gitveil respects the `gpg.program` git config setting, which means the GPG binary is determined by local repository config. An attacker who can modify `.git/config` (e.g., via a malicious clone) could point this to an arbitrary program. This is the same trust model as git itself -- local config is trusted. Be cautious when running gitveil in repositories you did not create.
+
+### Large file memory usage
+
+The clean filter must read the entire file into memory to compute the HMAC-SHA1 nonce before encryption can begin. Very large files (multi-GiB) may cause high memory usage.
+
 ## Project Structure
 
 ```

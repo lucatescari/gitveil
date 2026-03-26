@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use zeroize::Zeroizing;
 
 use crate::error::GitVeilError;
 use crate::git::config::get_git_config;
@@ -55,7 +56,32 @@ pub fn gpg_get_fingerprints(user_id: &str) -> Result<Vec<String>, GitVeilError> 
         )));
     }
 
+    // Validate all fingerprints are hex-only and of expected length
+    for fp in &fingerprints {
+        validate_fingerprint(fp)?;
+    }
+
     Ok(fingerprints)
+}
+
+/// Validate that a GPG fingerprint is a hex string of expected length.
+/// Prevents path traversal and command injection via crafted fingerprints.
+fn validate_fingerprint(fingerprint: &str) -> Result<(), GitVeilError> {
+    if !fingerprint.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(GitVeilError::Gpg(format!(
+            "invalid fingerprint (non-hex characters): {}",
+            fingerprint
+        )));
+    }
+    // SHA-1 fingerprints are 40 chars, SHA-256 are 64 chars
+    if fingerprint.len() < 40 {
+        return Err(GitVeilError::Gpg(format!(
+            "invalid fingerprint (too short: {} chars): {}",
+            fingerprint.len(),
+            fingerprint
+        )));
+    }
+    Ok(())
 }
 
 /// Encrypt data to a GPG recipient and write to a file.
@@ -112,7 +138,9 @@ pub fn gpg_encrypt_to_file(
 }
 
 /// Decrypt a GPG-encrypted file and return the plaintext.
-pub fn gpg_decrypt_from_file(path: &Path) -> Result<Vec<u8>, GitVeilError> {
+/// The returned buffer is wrapped in `Zeroizing` to ensure key material
+/// is scrubbed from memory when dropped.
+pub fn gpg_decrypt_from_file(path: &Path) -> Result<Zeroizing<Vec<u8>>, GitVeilError> {
     let gpg = get_gpg_program();
 
     let output = Command::new(&gpg)
@@ -130,5 +158,5 @@ pub fn gpg_decrypt_from_file(path: &Path) -> Result<Vec<u8>, GitVeilError> {
         )));
     }
 
-    Ok(output.stdout)
+    Ok(Zeroizing::new(output.stdout))
 }

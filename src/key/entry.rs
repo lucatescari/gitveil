@@ -6,7 +6,7 @@ use crate::error::GitVeilError;
 use crate::key::format::{is_critical_field, read_field, write_end_field, write_field};
 
 /// A single key entry containing version, AES key, and HMAC key.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct KeyEntry {
     pub version: u32,
     pub aes_key: [u8; AES_KEY_LEN],
