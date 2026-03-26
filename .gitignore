@@ -6,9 +6,6 @@ debug/
 *.so
 *.dylib
 
-# Cargo
-Cargo.lock
-
 # Editor / IDE
 *.swp
 *.swo
