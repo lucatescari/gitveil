@@ -49,12 +49,6 @@ impl KeyFile {
         self.entries.values().next_back()
     }
 
-    /// Get a key entry by version.
-    #[allow(dead_code)]
-    pub fn get(&self, version: u32) -> Option<&KeyEntry> {
-        self.entries.get(&version)
-    }
-
     /// Load a key file from a reader.
     pub fn load(reader: &mut dyn Read) -> Result<Self, GitVeilError> {
         // Read and verify header
