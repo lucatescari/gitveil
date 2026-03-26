@@ -9,14 +9,6 @@ pub enum GitVeilError {
     #[error("Incompatible key file field: field_id={0}")]
     IncompatibleField(u32),
 
-    #[error("Key not found for version {0}")]
-    #[allow(dead_code)]
-    KeyVersionNotFound(u32),
-
-    #[error("Repository error: {0}")]
-    #[allow(dead_code)]
-    Repo(String),
-
     #[error("GPG error: {0}")]
     Gpg(String),
 

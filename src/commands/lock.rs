@@ -15,12 +15,17 @@ pub fn lock(key_name: Option<&str>, all: bool, force: bool) -> Result<(), GitVei
     if all {
         // Lock all keys by iterating over .git/git-crypt/keys/
         let keys_dir = git_dir.join("git-crypt").join("keys");
-        if !keys_dir.exists() {
+        if !keys_dir.is_dir() {
             return Err(GitVeilError::NotInitialized);
         }
 
         let key_dirs: Vec<_> = std::fs::read_dir(&keys_dir)?
             .filter_map(|e| e.ok())
+            .filter(|e| {
+                // Use file_type() which does NOT follow symlinks on DirEntry,
+                // so is_dir() is false for symlinks to directories.
+                e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+            })
             .collect();
 
         if key_dirs.is_empty() {
