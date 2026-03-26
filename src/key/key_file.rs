@@ -245,11 +245,12 @@ impl KeyFile {
         Ok(())
     }
 
-    /// Serialize to bytes.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, GitVeilError> {
+    /// Serialize to bytes. The returned buffer is wrapped in `Zeroizing`
+    /// to ensure key material is scrubbed from memory when dropped.
+    pub fn to_bytes(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, GitVeilError> {
         let mut buf = Vec::new();
         self.store(&mut buf)?;
-        Ok(buf)
+        Ok(zeroize::Zeroizing::new(buf))
     }
 }
 
