@@ -1,6 +1,8 @@
 use std::io;
 use std::path::PathBuf;
 
+use colored::Colorize;
+
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::repo::{find_git_dir, key_path};
@@ -21,7 +23,12 @@ pub fn export_key(key_name: Option<&str>, output_file: Option<&PathBuf>) -> Resu
     match output_file {
         Some(path) => {
             kf.store_to_file(path)?;
-            eprintln!("Key '{}' exported to {}.", key_name, path.display());
+            eprintln!(
+                "Key '{}' {} to {}.",
+                key_name.bold(),
+                "exported".green().bold(),
+                path.display().to_string().dimmed()
+            );
         }
         None => {
             // Write to stdout
