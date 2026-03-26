@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::Parser;
+use colored::Colorize;
 
 use cli::{Cli, Commands};
 use constants::DEFAULT_KEY_NAME;
@@ -64,7 +65,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("{} {}", "error:".red().bold(), e);
         process::exit(1);
     }
 }

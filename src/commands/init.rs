@@ -1,3 +1,5 @@
+use colored::Colorize;
+
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::config::configure_filters;
@@ -31,16 +33,17 @@ pub fn init(key_name: Option<&str>) -> Result<(), GitVeilError> {
     configure_filters(key_name)?;
 
     eprintln!(
-        "Initialized gitveil with key '{}'.",
-        key_name
+        "{} gitveil with key '{}'.",
+        "Initialized".green().bold(),
+        key_name.bold()
     );
     eprintln!("Add files to encrypt by specifying them in .gitattributes:");
     if key_name == DEFAULT_KEY_NAME {
-        eprintln!("  secretfile filter=git-crypt diff=git-crypt");
+        eprintln!("  {}", "secretfile filter=git-crypt diff=git-crypt".dimmed());
     } else {
         eprintln!(
-            "  secretfile filter=git-crypt-{} diff=git-crypt-{}",
-            key_name, key_name
+            "  {}",
+            format!("secretfile filter=git-crypt-{} diff=git-crypt-{}", key_name, key_name).dimmed()
         );
     }
 
