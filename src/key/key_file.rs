@@ -248,6 +248,39 @@ impl KeyFile {
         Ok(())
     }
 
+    /// Store the key file to a path, failing if the file already exists.
+    /// Uses `create_new(true)` for atomic create-if-not-exists to avoid TOCTOU races.
+    pub fn store_to_file_exclusive(&self, path: &Path) -> Result<(), GitVeilError> {
+        use std::io::Write;
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut buf = Vec::new();
+        self.store(&mut buf)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)?;
+            file.write_all(&buf)?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)?;
+            file.write_all(&buf)?;
+        }
+
+        Ok(())
+    }
+
     /// Serialize to bytes. The returned buffer is wrapped in `Zeroizing`
     /// to ensure key material is scrubbed from memory when dropped.
     pub fn to_bytes(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, GitVeilError> {
