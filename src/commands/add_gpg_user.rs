@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use colored::Colorize;
+
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::repo::{find_git_dir, find_repo_root, git_crypt_dir, key_path};
@@ -89,8 +91,11 @@ pub fn add_gpg_user(
     }
 
     eprintln!(
-        "Added GPG user {} (fingerprint: {}) for key '{}'.",
-        gpg_user_id, fingerprint, key_name
+        "{} GPG user {} (fingerprint: {}) for key '{}'.",
+        "Added".green().bold(),
+        gpg_user_id.bold(),
+        fingerprint.dimmed(),
+        key_name.bold()
     );
 
     Ok(())

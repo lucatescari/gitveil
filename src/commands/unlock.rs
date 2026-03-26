@@ -1,6 +1,8 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
+use colored::Colorize;
+
 use crate::error::GitVeilError;
 use crate::git::checkout::force_checkout_files;
 use crate::git::config::configure_filters;
@@ -31,7 +33,7 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
                 force_checkout_files(&files)?;
             }
 
-            eprintln!("Unlocked key '{}'.", key_name);
+            eprintln!("{} key '{}'.", "Unlocked".green().bold(), key_name.bold());
         }
     } else {
         // GPG-based unlock
@@ -80,7 +82,7 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
                             force_checkout_files(&files)?;
                         }
 
-                        eprintln!("Unlocked key '{}' via GPG.", key_name);
+                        eprintln!("{} key '{}' via GPG.", "Unlocked".green().bold(), key_name.bold());
                         unlocked_any = true;
                         break;
                     }

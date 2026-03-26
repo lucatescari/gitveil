@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use colored::Colorize;
+
 use crate::constants::ENCRYPTED_FILE_HEADER;
 use crate::error::GitVeilError;
 
@@ -36,11 +38,11 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
 
         if is_encrypted {
             if !unencrypted_only {
-                println!("    encrypted: {}", file);
+                println!("  {} {}", "encrypted:".green(), file);
             }
         } else {
             if !encrypted_only {
-                println!("not encrypted: {}", file);
+                println!("{} {}", "not encrypted:".yellow(), file);
             }
             if fix {
                 files_to_fix.push(file.clone());
@@ -49,7 +51,7 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
     }
 
     if fix && !files_to_fix.is_empty() {
-        eprintln!("Fixing {} file(s)...", files_to_fix.len());
+        eprintln!("{} {} file(s)...", "Fixing".cyan().bold(), files_to_fix.len());
         for file in &files_to_fix {
             let status = Command::new("git")
                 .args(["add", "--", file])
@@ -57,10 +59,10 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
                 .map_err(|e| GitVeilError::Git(format!("failed to stage {}: {}", file, e)))?;
 
             if !status.success() {
-                eprintln!("Warning: failed to stage {}", file);
+                eprintln!("{} failed to stage {}", "warning:".yellow().bold(), file);
             }
         }
-        eprintln!("Done. Run 'git commit' to save the re-encrypted files.");
+        eprintln!("{} Run '{}' to save the re-encrypted files.", "Done.".green().bold(), "git commit".bold());
     }
 
     Ok(())
