@@ -214,14 +214,34 @@ impl KeyFile {
         Ok(())
     }
 
-    /// Store the key file to a filesystem path.
+    /// Store the key file to a filesystem path with restricted permissions (0600).
+    /// Key material must never be world-readable.
     pub fn store_to_file(&self, path: &Path) -> Result<(), GitVeilError> {
+        use std::io::Write;
+
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         let mut buf = Vec::new();
         self.store(&mut buf)?;
-        fs::write(path, &buf)?;
+
+        // Write with mode 0600 (owner read/write only) to protect key material.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(path)?;
+            file.write_all(&buf)?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(path, &buf)?;
+        }
+
         Ok(())
     }
 
