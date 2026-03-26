@@ -96,16 +96,15 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
         return Ok(Vec::new());
     }
 
-    // Batch check attributes using --stdin (single subprocess for all files)
+    // Batch check attributes using -z --stdin (NUL-delimited, single subprocess)
     let mut child = Command::new("git")
-        .args(["check-attr", "filter", "--stdin"])
+        .args(["check-attr", "-z", "filter", "--stdin"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| GitVeilError::Git(format!("failed to run git check-attr: {}", e)))?;
 
-    // Write all filenames to stdin
     if let Some(ref mut stdin) = child.stdin {
         for file in &all_files {
             writeln!(stdin, "{}", file).map_err(|e| {
@@ -113,7 +112,6 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
             })?;
         }
     }
-    // Drop stdin to signal EOF
     drop(child.stdin.take());
 
     let output = child
@@ -121,20 +119,23 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
         .map_err(|e| GitVeilError::Git(format!("failed to wait for git check-attr: {}", e)))?;
 
     if !output.status.success() {
-        return Err(GitVeilError::Git("git check-attr --stdin failed".into()));
+        return Err(GitVeilError::Git("git check-attr -z --stdin failed".into()));
     }
 
-    // Parse output: each line is "path: filter: value"
-    let attr_output = String::from_utf8_lossy(&output.stdout);
-    let expected_suffix = format!(": filter: {}", filter_name);
+    // NUL-delimited output format: path\0attr\0value\0 (repeating triplets)
+    let fields: Vec<&[u8]> = output.stdout.split(|&b| b == 0).collect();
     let mut encrypted_files = Vec::new();
 
-    for line in attr_output.lines() {
-        if line.ends_with(&expected_suffix) {
-            // Extract path: everything before ": filter: <value>"
-            let path = &line[..line.len() - expected_suffix.len()];
+    let mut i = 0;
+    while i + 2 < fields.len() {
+        let path = String::from_utf8_lossy(fields[i]);
+        let value = String::from_utf8_lossy(fields[i + 2]);
+
+        if value == filter_name {
             encrypted_files.push(path.to_string());
         }
+
+        i += 3;
     }
 
     Ok(encrypted_files)
