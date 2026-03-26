@@ -155,6 +155,13 @@ impl KeyFile {
                     })?;
                     let flen = u32::from_be_bytes(flen_buf) as usize;
 
+                    if flen > MAX_FIELD_LEN {
+                        return Err(GitVeilError::InvalidKeyFile(format!(
+                            "entry field too large: {} bytes (max {})",
+                            flen, MAX_FIELD_LEN
+                        )));
+                    }
+
                     let mut fdata = vec![0u8; flen];
                     if flen > 0 {
                         reader.read_exact(&mut fdata).map_err(|_| {

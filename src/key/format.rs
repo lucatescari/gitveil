@@ -35,8 +35,14 @@ pub fn read_field(reader: &mut dyn Read) -> Result<Option<(u32, Vec<u8>)>, GitVe
 
 /// Write a TLV field to the stream.
 pub fn write_field(writer: &mut dyn Write, field_id: u32, data: &[u8]) -> Result<(), GitVeilError> {
+    let len: u32 = data.len().try_into().map_err(|_| {
+        GitVeilError::InvalidKeyFile(format!(
+            "field data too large for u32 length: {} bytes",
+            data.len()
+        ))
+    })?;
     writer.write_u32::<BigEndian>(field_id)?;
-    writer.write_u32::<BigEndian>(data.len() as u32)?;
+    writer.write_u32::<BigEndian>(len)?;
     writer.write_all(data)?;
     Ok(())
 }

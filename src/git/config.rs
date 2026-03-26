@@ -50,15 +50,13 @@ pub fn unset_git_config(name: &str) -> Result<(), GitVeilError> {
     Ok(())
 }
 
-/// Get the filter and diff config names for a key.
-fn filter_names(key_name: &str) -> (String, String) {
+/// Get the filter/diff config name for a key.
+/// Both the filter and diff sections use the same name.
+fn filter_name(key_name: &str) -> String {
     if key_name == DEFAULT_KEY_NAME {
-        ("git-crypt".to_string(), "git-crypt".to_string())
+        "git-crypt".to_string()
     } else {
-        (
-            format!("git-crypt-{}", key_name),
-            format!("git-crypt-{}", key_name),
-        )
+        format!("git-crypt-{}", key_name)
     }
 }
 
@@ -69,7 +67,7 @@ pub fn configure_filters(key_name: &str) -> Result<(), GitVeilError> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "gitveil".to_string());
 
-    let (filter_name, diff_name) = filter_names(key_name);
+    let name = filter_name(key_name);
 
     let key_arg = if key_name == DEFAULT_KEY_NAME {
         String::new()
@@ -78,16 +76,16 @@ pub fn configure_filters(key_name: &str) -> Result<(), GitVeilError> {
     };
 
     set_git_config(
-        &format!("filter.{filter_name}.smudge"),
+        &format!("filter.{name}.smudge"),
         &format!("\"{exe}\" smudge{key_arg}"),
     )?;
     set_git_config(
-        &format!("filter.{filter_name}.clean"),
+        &format!("filter.{name}.clean"),
         &format!("\"{exe}\" clean{key_arg}"),
     )?;
-    set_git_config(&format!("filter.{filter_name}.required"), "true")?;
+    set_git_config(&format!("filter.{name}.required"), "true")?;
     set_git_config(
-        &format!("diff.{diff_name}.textconv"),
+        &format!("diff.{name}.textconv"),
         &format!("\"{exe}\" diff{key_arg}"),
     )?;
 
@@ -96,12 +94,12 @@ pub fn configure_filters(key_name: &str) -> Result<(), GitVeilError> {
 
 /// Remove git clean/smudge/diff filter configuration for a key.
 pub fn deconfigure_filters(key_name: &str) -> Result<(), GitVeilError> {
-    let (filter_name, diff_name) = filter_names(key_name);
+    let name = filter_name(key_name);
 
-    unset_git_config(&format!("filter.{filter_name}.smudge"))?;
-    unset_git_config(&format!("filter.{filter_name}.clean"))?;
-    unset_git_config(&format!("filter.{filter_name}.required"))?;
-    unset_git_config(&format!("diff.{diff_name}.textconv"))?;
+    unset_git_config(&format!("filter.{name}.smudge"))?;
+    unset_git_config(&format!("filter.{name}.clean"))?;
+    unset_git_config(&format!("filter.{name}.required"))?;
+    unset_git_config(&format!("diff.{name}.textconv"))?;
 
     Ok(())
 }

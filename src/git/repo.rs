@@ -1,5 +1,6 @@
-use std::path::PathBuf;
-use std::process::Command;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use crate::error::GitVeilError;
 
@@ -59,17 +60,18 @@ pub fn is_working_tree_clean() -> Result<bool, GitVeilError> {
 
 /// Get the path where keys are stored for a given key name.
 /// Keys are stored in .git/git-crypt/keys/<keyname>
-pub fn key_path(git_dir: &PathBuf, key_name: &str) -> PathBuf {
+pub fn key_path(git_dir: &Path, key_name: &str) -> PathBuf {
     git_dir.join("git-crypt").join("keys").join(key_name)
 }
 
 /// Get the path to the .git-crypt directory in the repo root (committed to repo).
 /// This is where GPG-encrypted keys are stored.
-pub fn git_crypt_dir(repo_root: &PathBuf) -> PathBuf {
+pub fn git_crypt_dir(repo_root: &Path) -> PathBuf {
     repo_root.join(".git-crypt")
 }
 
 /// List files that have the git-crypt filter attribute set.
+/// Uses `git check-attr --stdin` to batch-check all files in a single subprocess.
 pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> {
     let filter_name = if key_name == "default" {
         "git-crypt".to_string()
@@ -77,36 +79,61 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
         format!("git-crypt-{}", key_name)
     };
 
-    // Use git ls-files to find tracked files, then check attributes
-    let output = Command::new("git")
+    // Get all tracked files
+    let ls_output = Command::new("git")
         .args(["ls-files"])
         .output()
         .map_err(|e| GitVeilError::Git(format!("failed to run git ls-files: {}", e)))?;
 
-    if !output.status.success() {
+    if !ls_output.status.success() {
         return Err(GitVeilError::Git("git ls-files failed".into()));
     }
 
-    let all_files = String::from_utf8_lossy(&output.stdout);
+    let all_files_str = String::from_utf8_lossy(&ls_output.stdout);
+    let all_files: Vec<&str> = all_files_str.lines().filter(|l| !l.is_empty()).collect();
+
+    if all_files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Batch check attributes using --stdin (single subprocess for all files)
+    let mut child = Command::new("git")
+        .args(["check-attr", "filter", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| GitVeilError::Git(format!("failed to run git check-attr: {}", e)))?;
+
+    // Write all filenames to stdin
+    if let Some(ref mut stdin) = child.stdin {
+        for file in &all_files {
+            writeln!(stdin, "{}", file).map_err(|e| {
+                GitVeilError::Git(format!("failed to write to git check-attr stdin: {}", e))
+            })?;
+        }
+    }
+    // Drop stdin to signal EOF
+    drop(child.stdin.take());
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| GitVeilError::Git(format!("failed to wait for git check-attr: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(GitVeilError::Git("git check-attr --stdin failed".into()));
+    }
+
+    // Parse output: each line is "path: filter: value"
+    let attr_output = String::from_utf8_lossy(&output.stdout);
+    let expected_suffix = format!(": filter: {}", filter_name);
     let mut encrypted_files = Vec::new();
 
-    for file in all_files.lines() {
-        if file.is_empty() {
-            continue;
-        }
-
-        // Check if this file has the git-crypt filter attribute
-        let attr_output = Command::new("git")
-            .args(["check-attr", "filter", "--", file])
-            .output()
-            .map_err(|e| GitVeilError::Git(format!("failed to check attributes: {}", e)))?;
-
-        if attr_output.status.success() {
-            let attr_str = String::from_utf8_lossy(&attr_output.stdout);
-            // Output format: "path: filter: value"
-            if attr_str.contains(&format!(": {}", filter_name)) {
-                encrypted_files.push(file.to_string());
-            }
+    for line in attr_output.lines() {
+        if line.ends_with(&expected_suffix) {
+            // Extract path: everything before ": filter: <value>"
+            let path = &line[..line.len() - expected_suffix.len()];
+            encrypted_files.push(path.to_string());
         }
     }
 

@@ -5,17 +5,45 @@ use crate::git::config::deconfigure_filters;
 use crate::git::repo::{find_git_dir, get_encrypted_files, is_working_tree_clean, key_path};
 
 /// Lock the repository: remove keys, deconfigure filters, and re-encrypt working copy.
-pub fn lock(key_name: Option<&str>, _all: bool, force: bool) -> Result<(), GitVeilError> {
-    let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
+pub fn lock(key_name: Option<&str>, all: bool, force: bool) -> Result<(), GitVeilError> {
     let git_dir = find_git_dir()?;
-    let kp = key_path(&git_dir, key_name);
-
-    if !kp.exists() {
-        return Err(GitVeilError::NotInitialized);
-    }
 
     if !force && !is_working_tree_clean()? {
         return Err(GitVeilError::DirtyWorkingDir);
+    }
+
+    if all {
+        // Lock all keys by iterating over .git/git-crypt/keys/
+        let keys_dir = git_dir.join("git-crypt").join("keys");
+        if !keys_dir.exists() {
+            return Err(GitVeilError::NotInitialized);
+        }
+
+        let key_dirs: Vec<_> = std::fs::read_dir(&keys_dir)?
+            .filter_map(|e| e.ok())
+            .collect();
+
+        if key_dirs.is_empty() {
+            return Err(GitVeilError::NotInitialized);
+        }
+
+        for entry in key_dirs {
+            let name = entry.file_name().to_string_lossy().to_string();
+            lock_single_key(&name, &git_dir)?;
+        }
+    } else {
+        let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
+        lock_single_key(key_name, &git_dir)?;
+    }
+
+    Ok(())
+}
+
+fn lock_single_key(key_name: &str, git_dir: &std::path::Path) -> Result<(), GitVeilError> {
+    let kp = key_path(git_dir, key_name);
+
+    if !kp.exists() {
+        return Err(GitVeilError::NotInitialized);
     }
 
     // Get list of encrypted files before deconfiguring filters
@@ -25,8 +53,7 @@ pub fn lock(key_name: Option<&str>, _all: bool, force: bool) -> Result<(), GitVe
     deconfigure_filters(key_name)?;
 
     // Remove the key file
-    std::fs::remove_file(&kp)
-        .map_err(|e| GitVeilError::Io(e))?;
+    std::fs::remove_file(&kp)?;
 
     // Clean up empty parent directories
     if let Some(parent) = kp.parent() {
