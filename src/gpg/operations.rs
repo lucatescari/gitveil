@@ -74,9 +74,9 @@ fn validate_fingerprint(fingerprint: &str) -> Result<(), GitVeilError> {
         )));
     }
     // SHA-1 fingerprints are 40 chars, SHA-256 are 64 chars
-    if fingerprint.len() < 40 {
+    if fingerprint.len() < 40 || fingerprint.len() > 64 {
         return Err(GitVeilError::Gpg(format!(
-            "invalid fingerprint (too short: {} chars): {}",
+            "invalid fingerprint length ({} chars, expected 40-64): {}",
             fingerprint.len(),
             fingerprint
         )));
