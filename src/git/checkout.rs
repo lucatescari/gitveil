@@ -3,7 +3,9 @@ use std::process::Command;
 use crate::error::GitVeilError;
 
 /// Force checkout files to trigger smudge/clean filters.
-/// Processes files in batches to avoid exceeding OS command-line argument limits.
+/// Uses `git checkout -f` to overwrite working copy files without
+/// pre-deleting them, preventing data loss if checkout fails.
+/// Processes files in batches to avoid exceeding OS argument limits.
 pub fn force_checkout_files(files: &[String]) -> Result<(), GitVeilError> {
     if files.is_empty() {
         return Ok(());
@@ -12,13 +14,8 @@ pub fn force_checkout_files(files: &[String]) -> Result<(), GitVeilError> {
     const BATCH_SIZE: usize = 100;
 
     for chunk in files.chunks(BATCH_SIZE) {
-        // Remove the files first so git checkout actually does something
-        for file in chunk {
-            let _ = std::fs::remove_file(file);
-        }
-
         let mut cmd = Command::new("git");
-        cmd.args(["checkout", "--"]);
+        cmd.args(["checkout", "-f", "--"]);
         for file in chunk {
             cmd.arg(file);
         }
