@@ -95,9 +95,10 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
         .spawn()
         .map_err(|e| GitVeilError::Git(format!("failed to run git check-attr: {}", e)))?;
 
+    // With -z, stdin expects NUL-terminated pathnames (not newline-terminated)
     if let Some(ref mut stdin) = child.stdin {
         for file in &all_files {
-            writeln!(stdin, "{}", file).map_err(|e| {
+            write!(stdin, "{}\0", file).map_err(|e| {
                 GitVeilError::Git(format!("failed to write to git check-attr stdin: {}", e))
             })?;
         }
