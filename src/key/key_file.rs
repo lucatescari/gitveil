@@ -96,6 +96,9 @@ impl KeyFile {
                         GitVeilError::InvalidKeyFile("key name is not valid UTF-8".into())
                     })?;
                     if !name.is_empty() {
+                        // Validate key name to prevent path traversal and
+                        // command injection from crafted key files.
+                        validate_key_name(&name)?;
                         kf.key_name = Some(name);
                     }
                 }
