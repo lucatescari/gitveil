@@ -18,5 +18,8 @@ debug/
 .DS_Store
 Thumbs.db
 
+# Release artifacts
+*.tar.gz
+
 # Personal testing guide
 TESTING.md

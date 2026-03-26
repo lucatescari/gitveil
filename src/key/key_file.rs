@@ -49,12 +49,6 @@ impl KeyFile {
         self.entries.values().next_back()
     }
 
-    /// Get a key entry by version.
-    #[allow(dead_code)]
-    pub fn get(&self, version: u32) -> Option<&KeyEntry> {
-        self.entries.get(&version)
-    }
-
     /// Load a key file from a reader.
     pub fn load(reader: &mut dyn Read) -> Result<Self, GitVeilError> {
         // Read and verify header
@@ -111,79 +105,15 @@ impl KeyFile {
             }
         }
 
-        // Read key entries until EOF
-        loop {
-            // Try to read the first field of the next entry to check for EOF
-            let mut peek_buf = [0u8; 8];
-            match reader.read_exact(&mut peek_buf) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(GitVeilError::Io(e)),
-            }
+        // Read remaining data and parse key entries from it.
+        // KeyEntry::load reads TLV fields until KEY_FIELD_END, consuming
+        // exactly one entry. We loop until the buffer is exhausted.
+        let mut remaining = Vec::new();
+        reader.read_to_end(&mut remaining)?;
+        let mut entry_reader = Cursor::new(&remaining);
 
-            // We read 8 bytes (field_id + field_len) — reconstruct a reader
-            // that starts with these bytes plus the rest
-            let field_id = u32::from_be_bytes([peek_buf[0], peek_buf[1], peek_buf[2], peek_buf[3]]);
-            let field_len =
-                u32::from_be_bytes([peek_buf[4], peek_buf[5], peek_buf[6], peek_buf[7]]) as usize;
-
-            if field_len > MAX_FIELD_LEN {
-                return Err(GitVeilError::InvalidKeyFile("field too large".into()));
-            }
-
-            let mut field_data = vec![0u8; field_len];
-            reader.read_exact(&mut field_data).map_err(|_| {
-                GitVeilError::InvalidKeyFile("truncated entry field".into())
-            })?;
-
-            // We need to reconstruct the entry reading. The entry starts with this field.
-            // Build a buffer containing this field + read the rest of the entry.
-            let mut entry_buf = Vec::new();
-            entry_buf.write_u32::<BigEndian>(field_id).unwrap();
-            entry_buf.write_u32::<BigEndian>(field_len as u32).unwrap();
-            entry_buf.extend_from_slice(&field_data);
-
-            // Read remaining fields for this entry until END
-            if field_id != KEY_FIELD_END {
-                loop {
-                    let mut fid_buf = [0u8; 4];
-                    reader.read_exact(&mut fid_buf).map_err(|_| {
-                        GitVeilError::InvalidKeyFile("truncated entry".into())
-                    })?;
-                    let fid = u32::from_be_bytes(fid_buf);
-
-                    let mut flen_buf = [0u8; 4];
-                    reader.read_exact(&mut flen_buf).map_err(|_| {
-                        GitVeilError::InvalidKeyFile("truncated entry".into())
-                    })?;
-                    let flen = u32::from_be_bytes(flen_buf) as usize;
-
-                    if flen > MAX_FIELD_LEN {
-                        return Err(GitVeilError::InvalidKeyFile(format!(
-                            "entry field too large: {} bytes (max {})",
-                            flen, MAX_FIELD_LEN
-                        )));
-                    }
-
-                    let mut fdata = vec![0u8; flen];
-                    if flen > 0 {
-                        reader.read_exact(&mut fdata).map_err(|_| {
-                            GitVeilError::InvalidKeyFile("truncated entry field data".into())
-                        })?;
-                    }
-
-                    entry_buf.write_u32::<BigEndian>(fid).unwrap();
-                    entry_buf.write_u32::<BigEndian>(flen as u32).unwrap();
-                    entry_buf.extend_from_slice(&fdata);
-
-                    if fid == KEY_FIELD_END {
-                        break;
-                    }
-                }
-            }
-
-            let mut entry_cursor = Cursor::new(&entry_buf);
-            let entry = KeyEntry::load(&mut entry_cursor)?;
+        while entry_reader.position() < remaining.len() as u64 {
+            let entry = KeyEntry::load(&mut entry_reader)?;
             kf.entries.insert(entry.version, entry);
         }
 

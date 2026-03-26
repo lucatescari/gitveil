@@ -39,7 +39,3 @@ pub const STREAM_BUFFER_SIZE: usize = 4096;
 
 /// The default key name
 pub const DEFAULT_KEY_NAME: &str = "default";
-
-/// Filter name prefix used in .gitattributes
-#[allow(dead_code)]
-pub const FILTER_NAME: &str = "git-crypt";

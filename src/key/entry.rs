@@ -6,6 +6,14 @@ use crate::error::GitVeilError;
 use crate::key::format::{is_critical_field, read_field, write_end_field, write_field};
 
 /// A single key entry containing version, AES key, and HMAC key.
+///
+/// # Security
+///
+/// Key material (`aes_key`, `hmac_key`) is automatically zeroized when this
+/// struct is dropped via `ZeroizeOnDrop`. However, intermediate copies created
+/// during serialization/deserialization (e.g., `Vec<u8>` buffers in `read_field`)
+/// are **not** automatically zeroized. The `KeyFile::to_bytes()` method wraps its
+/// output in `Zeroizing<Vec<u8>>` to mitigate this for the serialization path.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct KeyEntry {
     pub version: u32,

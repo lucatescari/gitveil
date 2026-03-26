@@ -13,6 +13,15 @@ type Aes256Ctr = Ctr32BE<Aes256>;
 ///
 /// The nonce is 12 bytes, and the counter is a 4-byte big-endian integer
 /// starting at 0, matching git-crypt's construction.
+///
+/// # Security Notes
+///
+/// - CTR mode provides **confidentiality only**, not integrity. An attacker
+///   can flip bits in ciphertext to flip corresponding plaintext bits.
+/// - The 4-byte counter limits encryption to 2^32 blocks (64 GiB per file).
+/// - Nonce reuse with the same key completely breaks confidentiality.
+///   This tool derives nonces deterministically from HMAC-SHA1 of the plaintext,
+///   which is safe (same plaintext = same nonce = same ciphertext, no leak).
 pub fn process_stream(
     input: &mut dyn Read,
     output: &mut dyn Write,
@@ -37,20 +46,6 @@ pub fn process_stream(
     }
 
     Ok(())
-}
-
-/// Encrypt data in-place using AES-256-CTR.
-#[allow(dead_code)]
-pub fn process_bytes(
-    data: &mut [u8],
-    aes_key: &[u8; AES_KEY_LEN],
-    nonce: &[u8; NONCE_LEN],
-) {
-    let mut iv = [0u8; 16];
-    iv[..NONCE_LEN].copy_from_slice(nonce);
-
-    let mut cipher = Aes256Ctr::new(aes_key.into(), &iv.into());
-    cipher.apply_keystream(data);
 }
 
 #[cfg(test)]
@@ -78,20 +73,6 @@ mod tests {
         process_stream(&mut input, &mut decrypted, &key, &nonce).unwrap();
 
         assert_eq!(decrypted, plaintext);
-    }
-
-    #[test]
-    fn test_process_bytes_roundtrip() {
-        let key = [0xAAu8; AES_KEY_LEN];
-        let nonce = [0xBBu8; NONCE_LEN];
-        let original = b"Test data for in-place processing";
-
-        let mut data = original.to_vec();
-        process_bytes(&mut data, &key, &nonce);
-        assert_ne!(data, original);
-
-        process_bytes(&mut data, &key, &nonce);
-        assert_eq!(data, original);
     }
 
     #[test]
