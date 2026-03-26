@@ -64,9 +64,16 @@ pub fn add_gpg_user(
             return Err(GitVeilError::Git("failed to stage GPG key files".into()));
         }
 
+        // Sanitize user ID: replace control characters and newlines to prevent
+        // injection of extra lines into the commit message.
+        let safe_user_id: String = gpg_user_id
+            .chars()
+            .map(|c| if c.is_control() { '_' } else { c })
+            .collect();
+
         let commit_msg = format!(
             "Add {} as gitveil collaborator\n\nKey: {}\nFingerprint: {}",
-            gpg_user_id, key_name, fingerprint
+            safe_user_id, key_name, fingerprint
         );
 
         let status = Command::new("git")

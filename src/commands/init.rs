@@ -11,18 +11,21 @@ pub fn init(key_name: Option<&str>) -> Result<(), GitVeilError> {
     let git_dir = find_git_dir()?;
     let kp = key_path(&git_dir, key_name);
 
-    if kp.exists() {
-        return Err(GitVeilError::AlreadyInitialized(key_name.to_string()));
-    }
-
     // Generate key
     let mut kf = KeyFile::generate();
     if key_name != DEFAULT_KEY_NAME {
         kf.set_key_name(key_name)?;
     }
 
-    // Store key in .git/git-crypt/keys/<keyname>
-    kf.store_to_file(&kp)?;
+    // Atomically create the key file (fails if it already exists),
+    // avoiding a TOCTOU race between exists-check and write.
+    kf.store_to_file_exclusive(&kp).map_err(|e| {
+        if kp.exists() {
+            GitVeilError::AlreadyInitialized(key_name.to_string())
+        } else {
+            e
+        }
+    })?;
 
     // Configure git filters
     configure_filters(key_name)?;
