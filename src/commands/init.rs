@@ -1,0 +1,45 @@
+use crate::constants::DEFAULT_KEY_NAME;
+use crate::error::GitVeilError;
+use crate::git::config::configure_filters;
+use crate::git::repo::{find_git_dir, key_path};
+use crate::key::key_file::KeyFile;
+
+/// Initialize gitveil in the current repository.
+/// Generates a new symmetric key and configures git filters.
+pub fn init(key_name: Option<&str>) -> Result<(), GitVeilError> {
+    let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
+    let git_dir = find_git_dir()?;
+    let kp = key_path(&git_dir, key_name);
+
+    if kp.exists() {
+        return Err(GitVeilError::AlreadyInitialized(key_name.to_string()));
+    }
+
+    // Generate key
+    let mut kf = KeyFile::generate();
+    if key_name != DEFAULT_KEY_NAME {
+        kf.set_key_name(key_name)?;
+    }
+
+    // Store key in .git/git-crypt/keys/<keyname>
+    kf.store_to_file(&kp)?;
+
+    // Configure git filters
+    configure_filters(key_name)?;
+
+    eprintln!(
+        "Initialized gitveil with key '{}'.",
+        key_name
+    );
+    eprintln!("Add files to encrypt by specifying them in .gitattributes:");
+    if key_name == DEFAULT_KEY_NAME {
+        eprintln!("  secretfile filter=git-crypt diff=git-crypt");
+    } else {
+        eprintln!(
+            "  secretfile filter=git-crypt-{} diff=git-crypt-{}",
+            key_name, key_name
+        );
+    }
+
+    Ok(())
+}

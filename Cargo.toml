@@ -1,0 +1,19 @@
+[package]
+name = "gitveil"
+version = "0.1.0"
+edition = "2021"
+description = "Transparent file encryption in git (git-crypt compatible)"
+license = "GPL-3.0"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+aes = "0.8"
+ctr = "0.9"
+cipher = { version = "0.4", features = ["std"] }
+hmac = "0.12"
+sha1 = "0.10"
+rand = "0.8"
+thiserror = "2"
+anyhow = "1"
+byteorder = "1"
+zeroize = { version = "1", features = ["derive"] }

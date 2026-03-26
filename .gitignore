@@ -1,0 +1,25 @@
+# Build artifacts
+/target
+debug/
+*.d
+*.o
+*.so
+*.dylib
+
+# Cargo
+Cargo.lock
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal testing guide
+TESTING.md
