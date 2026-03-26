@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use zeroize::Zeroizing;
 
 use crate::error::GitVeilError;
 use crate::git::config::get_git_config;
@@ -112,7 +113,9 @@ pub fn gpg_encrypt_to_file(
 }
 
 /// Decrypt a GPG-encrypted file and return the plaintext.
-pub fn gpg_decrypt_from_file(path: &Path) -> Result<Vec<u8>, GitVeilError> {
+/// The returned buffer is wrapped in `Zeroizing` to ensure key material
+/// is scrubbed from memory when dropped.
+pub fn gpg_decrypt_from_file(path: &Path) -> Result<Zeroizing<Vec<u8>>, GitVeilError> {
     let gpg = get_gpg_program();
 
     let output = Command::new(&gpg)
@@ -130,5 +133,5 @@ pub fn gpg_decrypt_from_file(path: &Path) -> Result<Vec<u8>, GitVeilError> {
         )));
     }
 
-    Ok(output.stdout)
+    Ok(Zeroizing::new(output.stdout))
 }
