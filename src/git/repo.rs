@@ -34,16 +34,6 @@ pub fn find_repo_root() -> Result<PathBuf, GitVeilError> {
     Ok(PathBuf::from(path))
 }
 
-/// Check if the current directory is inside a git repository.
-#[allow(dead_code)]
-pub fn is_git_repo() -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// Check if the working tree is clean (no uncommitted changes).
 pub fn is_working_tree_clean() -> Result<bool, GitVeilError> {
     let output = Command::new("git")
