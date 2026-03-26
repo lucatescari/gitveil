@@ -24,7 +24,12 @@ pub fn clean(
         .latest()
         .ok_or(GitVeilError::NoKeyEntries)?;
 
-    // Read all plaintext (must buffer to compute HMAC before encryption)
+    // Read all plaintext into memory. This is required because the deterministic
+    // nonce is derived from HMAC-SHA1 of the entire file contents — we must hash
+    // the complete plaintext before we can begin encryption. This means memory
+    // usage is proportional to file size. For very large files (multi-GiB), this
+    // could be problematic; a future optimization could stream the HMAC computation
+    // and then re-read from a temp file for encryption.
     let mut plaintext = Vec::new();
     input.read_to_end(&mut plaintext)?;
 

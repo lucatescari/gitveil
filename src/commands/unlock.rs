@@ -68,7 +68,7 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
             for gpg_file in &gpg_files {
                 match gpg_decrypt_from_file(gpg_file) {
                     Ok(key_data) => {
-                        let mut cursor = Cursor::new(key_data);
+                        let mut cursor = Cursor::new(key_data.as_slice());
                         let kf = KeyFile::load(&mut cursor)?;
                         let kp = key_path(&git_dir, &key_name);
 

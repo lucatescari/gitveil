@@ -48,3 +48,58 @@ pub fn diff(file_path: &Path, output: &mut dyn Write, key_file: &KeyFile) -> Res
     output.flush()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filter::clean;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_diff_decrypts_encrypted_file() {
+        let kf = KeyFile::generate();
+        let plaintext = b"Secret data for diff test";
+
+        // Encrypt via clean filter
+        let mut encrypted = Vec::new();
+        clean::clean(
+            &mut Cursor::new(plaintext.as_slice()),
+            &mut encrypted,
+            &kf,
+        )
+        .unwrap();
+
+        // Write encrypted data to a temp file
+        let dir = std::env::temp_dir().join("gitveil-test-diff");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("test-encrypted.bin");
+        std::fs::write(&file_path, &encrypted).unwrap();
+
+        // Diff should produce the original plaintext
+        let mut output = Vec::new();
+        diff(&file_path, &mut output, &kf).unwrap();
+
+        assert_eq!(output, plaintext);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_diff_passthrough_non_encrypted_file() {
+        let kf = KeyFile::generate();
+        let plaintext = b"This is just a normal text file, not encrypted";
+
+        let dir = std::env::temp_dir().join("gitveil-test-diff-plain");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("test-plain.txt");
+        std::fs::write(&file_path, plaintext).unwrap();
+
+        let mut output = Vec::new();
+        diff(&file_path, &mut output, &kf).unwrap();
+
+        assert_eq!(output, plaintext);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
