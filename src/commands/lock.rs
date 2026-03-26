@@ -1,3 +1,5 @@
+use colored::Colorize;
+
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::checkout::force_checkout_files;
@@ -74,6 +76,6 @@ fn lock_single_key(key_name: &str, git_dir: &std::path::Path) -> Result<(), GitV
         force_checkout_files(&files)?;
     }
 
-    eprintln!("Locked key '{}'.", key_name);
+    eprintln!("{} key '{}'.", "Locked".yellow().bold(), key_name.bold());
     Ok(())
 }
