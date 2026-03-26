@@ -21,16 +21,27 @@ pub fn smudge(
     output: &mut dyn Write,
     key_file: &KeyFile,
 ) -> Result<(), GitVeilError> {
-    // Read header
+    // Read header. If the file is shorter than the header, it's not encrypted —
+    // pass through whatever bytes were read.
     let mut header = [0u8; ENCRYPTED_FILE_HEADER_LEN];
-    match input.read_exact(&mut header) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            // File is shorter than header — not encrypted, pass through
-            output.write_all(&header[..0])?;
-            return Ok(());
+    let mut header_bytes_read = 0;
+    while header_bytes_read < ENCRYPTED_FILE_HEADER_LEN {
+        match input.read(&mut header[header_bytes_read..]) {
+            Ok(0) => break, // EOF before full header
+            Ok(n) => header_bytes_read += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(GitVeilError::Io(e)),
         }
-        Err(e) => return Err(GitVeilError::Io(e)),
+    }
+
+    if header_bytes_read == 0 {
+        return Ok(()); // Empty file
+    }
+
+    if header_bytes_read < ENCRYPTED_FILE_HEADER_LEN {
+        // File is shorter than header — not encrypted, pass through partial read
+        output.write_all(&header[..header_bytes_read])?;
+        return Ok(());
     }
 
     if header != ENCRYPTED_FILE_HEADER {
@@ -82,5 +93,28 @@ mod tests {
         smudge(&mut Cursor::new(data), &mut output, &kf).unwrap();
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_smudge_passthrough_short_file() {
+        let kf = KeyFile::generate();
+        // File shorter than the 10-byte header — must pass through intact
+        let data = b"short";
+
+        let mut output = Vec::new();
+        smudge(&mut Cursor::new(data.as_slice()), &mut output, &kf).unwrap();
+
+        assert_eq!(output, data);
+    }
+
+    #[test]
+    fn test_smudge_passthrough_one_byte() {
+        let kf = KeyFile::generate();
+        let data = b"x";
+
+        let mut output = Vec::new();
+        smudge(&mut Cursor::new(data.as_slice()), &mut output, &kf).unwrap();
+
+        assert_eq!(output, data);
     }
 }
