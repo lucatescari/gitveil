@@ -59,9 +59,13 @@ pub enum Commands {
         #[arg(long)]
         trusted: bool,
 
-        /// GPG user ID (email, key ID, or fingerprint)
+        /// Import GPG key(s) from a file or directory instead of the local keyring
+        #[arg(long = "from")]
+        from: Option<PathBuf>,
+
+        /// GPG user ID (email, key ID, or fingerprint) — not required when using --from with a directory
         #[arg()]
-        gpg_user_id: String,
+        gpg_user_id: Option<String>,
     },
 
     /// Export the symmetric key to a file
