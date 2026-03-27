@@ -38,12 +38,14 @@ fn main() {
             key_name,
             no_commit,
             trusted,
+            from,
             gpg_user_id,
         } => commands::add_gpg_user::add_gpg_user(
             key_name.as_deref(),
             no_commit,
             trusted,
-            &gpg_user_id,
+            gpg_user_id.as_deref(),
+            from.as_deref(),
         ),
 
         Commands::ExportKey {
