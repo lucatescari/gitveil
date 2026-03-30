@@ -46,12 +46,7 @@ pub fn preview_key_file(path: &Path) -> Result<GpgKeyInfo, GitVeilError> {
     let gpg = get_gpg_program();
 
     let output = Command::new(&gpg)
-        .args([
-            "--with-colons",
-            "--import-options",
-            "show-only",
-            "--import",
-        ])
+        .args(["--with-colons", "--import-options", "show-only", "--import"])
         .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -144,7 +139,12 @@ pub fn pick_keys(keys: &[GpgKeyInfo]) -> Result<Vec<usize>, GitVeilError> {
     for (i, key) in keys.iter().enumerate() {
         let num = format!("  {:>3})", i + 1).cyan().bold();
         let uid = key.uid.bold();
-        let fp = format!("({}...)", &key.fingerprint[..16]).dimmed();
+        let fp_short = if key.fingerprint.len() >= 16 {
+            &key.fingerprint[..16]
+        } else {
+            &key.fingerprint
+        };
+        let fp = format!("({}...)", fp_short).dimmed();
         let file = key
             .path
             .file_name()
@@ -228,5 +228,8 @@ fn scan_dir_recursive(dir: &Path, keys: &mut Vec<GpgKeyInfo>) -> Result<(), GitV
 
 /// Check if a file has a GPG key file extension.
 fn is_key_file_extension(path: &Path) -> bool {
-    matches!(path.extension().and_then(|e| e.to_str()), Some("asc" | "gpg" | "pub" | "key"))
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("asc" | "gpg" | "pub" | "key")
+    )
 }

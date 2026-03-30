@@ -42,7 +42,6 @@ impl KeyEntry {
         let mut hmac_key: Option<[u8; HMAC_KEY_LEN]> = None;
 
         while let Some((field_id, data)) = read_field(reader)? {
-
             match field_id {
                 KEY_FIELD_END => break,
                 KEY_FIELD_VERSION => {

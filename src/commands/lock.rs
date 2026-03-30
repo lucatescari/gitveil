@@ -7,7 +7,12 @@ use crate::git::config::deconfigure_filters;
 use crate::git::repo::{find_git_dir, get_encrypted_files, is_working_tree_clean, key_path};
 
 /// Lock the repository: remove keys, deconfigure filters, and re-encrypt working copy.
-pub fn lock(key_name: Option<&str>, all: bool, force: bool, quiet: bool) -> Result<(), GitVeilError> {
+pub fn lock(
+    key_name: Option<&str>,
+    all: bool,
+    force: bool,
+    quiet: bool,
+) -> Result<(), GitVeilError> {
     let git_dir = find_git_dir()?;
 
     if !force && !is_working_tree_clean()? {
@@ -21,20 +26,20 @@ pub fn lock(key_name: Option<&str>, all: bool, force: bool, quiet: bool) -> Resu
             return Err(GitVeilError::NotInitialized);
         }
 
-        let key_dirs: Vec<_> = std::fs::read_dir(&keys_dir)?
+        let key_entries: Vec<_> = std::fs::read_dir(&keys_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| {
-                // Use file_type() which does NOT follow symlinks on DirEntry,
-                // so is_dir() is false for symlinks to directories.
-                e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                // Key files are stored directly in the keys/ directory.
+                // Skip symlinks to prevent following links outside the repo.
+                e.file_type().map(|t| t.is_file()).unwrap_or(false)
             })
             .collect();
 
-        if key_dirs.is_empty() {
+        if key_entries.is_empty() {
             return Err(GitVeilError::NotInitialized);
         }
 
-        for entry in key_dirs {
+        for entry in key_entries {
             let name = entry.file_name().to_string_lossy().to_string();
             lock_single_key(&name, &git_dir, quiet)?;
         }
@@ -46,7 +51,11 @@ pub fn lock(key_name: Option<&str>, all: bool, force: bool, quiet: bool) -> Resu
     Ok(())
 }
 
-fn lock_single_key(key_name: &str, git_dir: &std::path::Path, quiet: bool) -> Result<(), GitVeilError> {
+fn lock_single_key(
+    key_name: &str,
+    git_dir: &std::path::Path,
+    quiet: bool,
+) -> Result<(), GitVeilError> {
     let kp = key_path(git_dir, key_name);
 
     if !kp.exists() {

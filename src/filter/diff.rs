@@ -11,7 +11,11 @@ use crate::key::key_file::KeyFile;
 /// This is called by git for `git diff` to show decrypted content.
 ///
 /// Unlike the smudge filter, this reads from a file path (not stdin).
-pub fn diff(file_path: &Path, output: &mut dyn Write, key_file: &KeyFile) -> Result<(), GitVeilError> {
+pub fn diff(
+    file_path: &Path,
+    output: &mut dyn Write,
+    key_file: &KeyFile,
+) -> Result<(), GitVeilError> {
     let file = File::open(file_path)?;
     let mut reader = BufReader::new(file);
 
@@ -33,9 +37,7 @@ pub fn diff(file_path: &Path, output: &mut dyn Write, key_file: &KeyFile) -> Res
         return Ok(());
     }
 
-    let entry = key_file
-        .latest()
-        .ok_or(GitVeilError::NoKeyEntries)?;
+    let entry = key_file.latest().ok_or(GitVeilError::NoKeyEntries)?;
 
     // Read nonce
     let mut nonce = [0u8; NONCE_LEN];
@@ -62,12 +64,7 @@ mod tests {
 
         // Encrypt via clean filter
         let mut encrypted = Vec::new();
-        clean::clean(
-            &mut Cursor::new(plaintext.as_slice()),
-            &mut encrypted,
-            &kf,
-        )
-        .unwrap();
+        clean::clean(&mut Cursor::new(plaintext.as_slice()), &mut encrypted, &kf).unwrap();
 
         // Write encrypted data to a temp file
         let dir = std::env::temp_dir().join("gitveil-test-diff");

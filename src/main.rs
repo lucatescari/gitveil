@@ -60,6 +60,21 @@ fn main() {
             fix,
         } => commands::status::status(encrypted_only, unencrypted_only, fix),
 
+        Commands::RmGpgUser {
+            key_name,
+            no_commit,
+            gpg_user_id,
+        } => commands::rm_gpg_user::rm_gpg_user(key_name.as_deref(), no_commit, &gpg_user_id),
+
+        Commands::LsGpgUsers { key_name } => {
+            commands::ls_gpg_users::ls_gpg_users(key_name.as_deref())
+        }
+
+        Commands::Completions { shell } => {
+            cli::print_completions(shell);
+            Ok(())
+        }
+
         Commands::Clean { key_name } => run_clean(key_name.as_deref()),
 
         Commands::Smudge { key_name } => run_smudge(key_name.as_deref()),
@@ -106,9 +121,8 @@ fn run_diff(key_name: Option<&str>, file: Option<PathBuf>) -> Result<(), error::
     let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
     let kf = load_key_file(key_name)?;
 
-    let file_path = file.ok_or_else(|| {
-        error::GitVeilError::Other("diff command requires a file path".into())
-    })?;
+    let file_path =
+        file.ok_or_else(|| error::GitVeilError::Other("diff command requires a file path".into()))?;
 
     let mut stdout = io::stdout().lock();
     filter::diff::diff(&file_path, &mut stdout, &kf)

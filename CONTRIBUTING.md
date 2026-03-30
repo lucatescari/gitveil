@@ -24,13 +24,16 @@ cargo build
 cargo test
 ```
 
-All 27 unit tests should pass. They cover:
+All 43 tests should pass (27 unit + 16 integration). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
 - Clean/smudge/diff filter round-trips
 - Non-encrypted passthrough behavior
 - Key name validation
+- Full E2E: init → encrypt → lock → unlock (integration)
+- Status, export-key, quiet mode, error messages (integration)
+- Edge cases: empty files, binary files, multi-key lock (integration)
 
 ### Running Manually
 
@@ -50,15 +53,19 @@ src/
   crypto/       Core cryptography (AES-CTR, HMAC-SHA1, random)
   key/          Key file format (TLV serialization, entries, key container)
   filter/       Git clean/smudge/diff filters
-  commands/     User-facing commands (init, lock, unlock, status, etc.)
+  commands/     User-facing commands (init, lock, unlock, status, ls/rm-gpg-users, etc.)
   git/          Git repository helpers (config, checkout, repo inspection)
   gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI)
-  cli.rs        clap CLI definitions
+  cli.rs        clap CLI definitions + shell completion generation
   constants.rs  Shared constants (magic bytes, sizes, field IDs)
   error.rs      Error types
   main.rs       Entry point
+tests/
+  integration.rs  E2E tests using temporary git repos
 scripts/
-  release.sh    Automated release + Homebrew formula update
+  release.sh      Automated release + Homebrew formula update
+.github/
+  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test)
 ```
 
 ## Development Guidelines

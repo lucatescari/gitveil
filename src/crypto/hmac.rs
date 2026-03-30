@@ -8,8 +8,7 @@ type HmacSha1 = Hmac<Sha1>;
 /// Compute HMAC-SHA1 of data using the given key.
 /// Returns the full 20-byte digest.
 pub fn compute_hmac_sha1(hmac_key: &[u8; HMAC_KEY_LEN], data: &[u8]) -> [u8; 20] {
-    let mut mac =
-        HmacSha1::new_from_slice(hmac_key).expect("HMAC-SHA1 accepts any key length");
+    let mut mac = HmacSha1::new_from_slice(hmac_key).expect("HMAC-SHA1 accepts any key length");
     mac.update(data);
     let result = mac.finalize();
     let bytes = result.into_bytes();

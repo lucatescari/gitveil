@@ -15,14 +15,14 @@ use crate::key::key_file::KeyFile;
 /// This encrypts the symmetric key to the user's GPG public key
 /// and commits the result to .git-crypt/keys/<keyname>/0/<fingerprint>.gpg
 ///
-/// When `--from` is provided, imports the GPG key from a file or directory
-/// before adding the user. If a directory is given, shows an interactive picker.
+/// When `--from` is provided, imports the GPG key from a file, directory,
+/// or git URL before adding the user.
 pub fn add_gpg_user(
     key_name: Option<&str>,
     no_commit: bool,
     trusted: bool,
     gpg_user_id: Option<&str>,
-    from: Option<&Path>,
+    from: Option<&str>,
 ) -> Result<(), GitVeilError> {
     let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
     let git_dir = find_git_dir()?;
@@ -33,11 +33,23 @@ pub fn add_gpg_user(
     }
 
     match from {
-        Some(from_path) => add_from_path(key_name, no_commit, trusted, from_path, &git_dir)?,
+        Some(from_value) => {
+            if is_git_url(from_value) {
+                add_from_git_url(key_name, no_commit, trusted, from_value, &git_dir)?;
+            } else {
+                add_from_path(
+                    key_name,
+                    no_commit,
+                    trusted,
+                    Path::new(from_value),
+                    &git_dir,
+                )?;
+            }
+        }
         None => {
             let gpg_user_id = gpg_user_id.ok_or_else(|| {
                 GitVeilError::Other(
-                    "GPG user ID is required (or use --from to import from a file/directory)"
+                    "GPG user ID is required (or use --from to import from a file/directory/URL)"
                         .into(),
                 )
             })?;
@@ -46,6 +58,48 @@ pub fn add_gpg_user(
     }
 
     Ok(())
+}
+
+/// Check if a string looks like a git URL.
+fn is_git_url(s: &str) -> bool {
+    s.starts_with("git@")
+        || s.starts_with("https://")
+        || s.starts_with("http://")
+        || s.starts_with("ssh://")
+        || s.ends_with(".git")
+}
+
+/// Clone a git repo to a temp directory, scan for keys, pick, and add.
+fn add_from_git_url(
+    key_name: &str,
+    no_commit: bool,
+    trusted: bool,
+    url: &str,
+    git_dir: &Path,
+) -> Result<(), GitVeilError> {
+    eprintln!("{} {}...", "Cloning".cyan().bold(), url.dimmed());
+
+    let tmp_dir = std::env::temp_dir().join(format!("gitveil-keyring-{}", std::process::id()));
+
+    let status = Command::new("git")
+        .args(["clone", "--depth", "1", "--", url])
+        .arg(&tmp_dir)
+        .status()
+        .map_err(|e| GitVeilError::Git(format!("failed to clone {}: {}", url, e)))?;
+
+    if !status.success() {
+        return Err(GitVeilError::Git(format!(
+            "failed to clone '{}'. Check the URL and your access.",
+            url
+        )));
+    }
+
+    let result = add_from_path(key_name, no_commit, trusted, &tmp_dir, git_dir);
+
+    // Clean up temp clone
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    result
 }
 
 /// Handle --from: import from a file or directory, then add as collaborator.
@@ -66,7 +120,14 @@ fn add_from_path(
             info.fingerprint.dimmed()
         );
         import_key_file(from_path)?;
-        add_by_fingerprint(key_name, no_commit, trusted, &info.fingerprint, &info.uid, git_dir)?;
+        add_by_fingerprint(
+            key_name,
+            no_commit,
+            trusted,
+            &info.fingerprint,
+            &info.uid,
+            git_dir,
+        )?;
     } else if from_path.is_dir() {
         // Directory: scan, pick, import, add each
         let keys = scan_key_directory(from_path)?;
@@ -112,7 +173,14 @@ fn add_single_user(
     let fingerprints = gpg_get_fingerprints(gpg_user_id)?;
     let fingerprint = &fingerprints[0];
 
-    add_by_fingerprint(key_name, no_commit, trusted, fingerprint, gpg_user_id, git_dir)
+    add_by_fingerprint(
+        key_name,
+        no_commit,
+        trusted,
+        fingerprint,
+        gpg_user_id,
+        git_dir,
+    )
 }
 
 /// Core logic: encrypt the repo key to a GPG fingerprint and optionally commit.
@@ -190,7 +258,12 @@ fn add_by_fingerprint(
         "{} GPG user {} (fingerprint: {}) for key '{}'.",
         "Added".green().bold(),
         display_name.bold(),
-        &fingerprint[..16].dimmed(),
+        if fingerprint.len() >= 16 {
+            &fingerprint[..16]
+        } else {
+            fingerprint
+        }
+        .dimmed(),
         key_name.bold()
     );
 

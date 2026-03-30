@@ -1,4 +1,5 @@
 use std::io::{Cursor, Read, Write};
+use zeroize::Zeroizing;
 
 use crate::constants::*;
 use crate::crypto::aes_ctr;
@@ -20,9 +21,7 @@ pub fn clean(
     output: &mut dyn Write,
     key_file: &KeyFile,
 ) -> Result<(), GitVeilError> {
-    let entry = key_file
-        .latest()
-        .ok_or(GitVeilError::NoKeyEntries)?;
+    let entry = key_file.latest().ok_or(GitVeilError::NoKeyEntries)?;
 
     // Read all plaintext into memory. This is required because the deterministic
     // nonce is derived from HMAC-SHA1 of the entire file contents — we must hash
@@ -30,7 +29,7 @@ pub fn clean(
     // usage is proportional to file size. For very large files (multi-GiB), this
     // could be problematic; a future optimization could stream the HMAC computation
     // and then re-read from a temp file for encryption.
-    let mut plaintext = Vec::new();
+    let mut plaintext = Zeroizing::new(Vec::new());
     input.read_to_end(&mut plaintext)?;
 
     // Derive deterministic nonce from HMAC-SHA1
@@ -69,7 +68,10 @@ mod tests {
         // Check header
         assert!(output.starts_with(ENCRYPTED_FILE_HEADER));
         // Total: 10 (header) + 12 (nonce) + 13 (ciphertext) = 35
-        assert_eq!(output.len(), ENCRYPTED_FILE_HEADER_LEN + NONCE_LEN + plaintext.len());
+        assert_eq!(
+            output.len(),
+            ENCRYPTED_FILE_HEADER_LEN + NONCE_LEN + plaintext.len()
+        );
     }
 
     #[test]
