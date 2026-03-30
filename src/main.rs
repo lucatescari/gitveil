@@ -60,6 +60,12 @@ fn main() {
             fix,
         } => commands::status::status(encrypted_only, unencrypted_only, fix),
 
+        Commands::RmGpgUser {
+            key_name,
+            no_commit,
+            gpg_user_id,
+        } => commands::rm_gpg_user::rm_gpg_user(key_name.as_deref(), no_commit, &gpg_user_id),
+
         Commands::LsGpgUsers { key_name } => {
             commands::ls_gpg_users::ls_gpg_users(key_name.as_deref())
         }
