@@ -60,6 +60,11 @@ fn main() {
             fix,
         } => commands::status::status(encrypted_only, unencrypted_only, fix),
 
+        Commands::Completions { shell } => {
+            cli::print_completions(shell);
+            Ok(())
+        }
+
         Commands::Clean { key_name } => run_clean(key_name.as_deref()),
 
         Commands::Smudge { key_name } => run_smudge(key_name.as_deref()),

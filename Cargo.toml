@@ -7,6 +7,7 @@ license = "GPL-3.0"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 aes = "0.8"
 ctr = "0.9"
 cipher = { version = "0.4", features = ["std"] }
