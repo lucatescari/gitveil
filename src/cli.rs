@@ -64,9 +64,9 @@ pub enum Commands {
         #[arg(long)]
         trusted: bool,
 
-        /// Import GPG key(s) from a file or directory instead of the local keyring
+        /// Import GPG key(s) from a file, directory, or git URL
         #[arg(long = "from")]
-        from: Option<PathBuf>,
+        from: Option<String>,
 
         /// GPG user ID (email, key ID, or fingerprint) — not required when using --from with a directory
         #[arg()]
