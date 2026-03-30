@@ -1,5 +1,7 @@
 # Gitveil
 
+[![CI](https://github.com/lucatescari/gitveil/actions/workflows/ci.yml/badge.svg)](https://github.com/lucatescari/gitveil/actions/workflows/ci.yml)
+
 **Transparent file encryption in git** -- a Rust implementation compatible with [git-crypt](https://github.com/AGWA/git-crypt).
 
 Gitveil lets you store sensitive files (API keys, credentials, private configs) alongside public code in a git repository. Files you mark for encryption are automatically encrypted when committed and decrypted when checked out. Everyone else uses git normally -- they just can't read the encrypted files without the key.
