@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(
@@ -63,9 +64,9 @@ pub enum Commands {
         #[arg(long)]
         trusted: bool,
 
-        /// Import GPG key(s) from a file or directory instead of the local keyring
+        /// Import GPG key(s) from a file, directory, or git URL
         #[arg(long = "from")]
-        from: Option<PathBuf>,
+        from: Option<String>,
 
         /// GPG user ID (email, key ID, or fingerprint) — not required when using --from with a directory
         #[arg()]
@@ -99,6 +100,37 @@ pub enum Commands {
         fix: bool,
     },
 
+    /// Remove a GPG user's access to the repository
+    #[command(name = "rm-gpg-user")]
+    RmGpgUser {
+        /// Use a specific named key
+        #[arg(short = 'k', long = "key-name")]
+        key_name: Option<String>,
+
+        /// Don't automatically commit the removal
+        #[arg(short = 'n', long = "no-commit")]
+        no_commit: bool,
+
+        /// GPG user ID (email, key ID, or fingerprint) to remove
+        #[arg()]
+        gpg_user_id: String,
+    },
+
+    /// List GPG users who have access to the repository
+    #[command(name = "ls-gpg-users")]
+    LsGpgUsers {
+        /// List users for a specific named key only
+        #[arg(short = 'k', long = "key-name")]
+        key_name: Option<String>,
+    },
+
+    /// Generate shell completions for bash, zsh, or fish
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
     // -- Plumbing commands (invoked by git, not the user) --
     /// [plumbing] Encrypt stdin (clean filter)
     #[command(hide = true)]
@@ -127,4 +159,14 @@ pub enum Commands {
         #[arg()]
         file: Option<PathBuf>,
     },
+}
+
+/// Generate shell completions and write to stdout.
+pub fn print_completions(shell: Shell) {
+    clap_complete::generate(
+        shell,
+        &mut Cli::command(),
+        "gitveil",
+        &mut std::io::stdout(),
+    );
 }
