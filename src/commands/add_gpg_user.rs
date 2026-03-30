@@ -190,7 +190,7 @@ fn add_by_fingerprint(
         "{} GPG user {} (fingerprint: {}) for key '{}'.",
         "Added".green().bold(),
         display_name.bold(),
-        &fingerprint[..16].dimmed(),
+        if fingerprint.len() >= 16 { &fingerprint[..16] } else { fingerprint }.dimmed(),
         key_name.bold()
     );
 
