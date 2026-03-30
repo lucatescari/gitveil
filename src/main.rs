@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::Parser;
+use colored::Colorize;
 
 use cli::{Cli, Commands};
 use constants::DEFAULT_KEY_NAME;
@@ -37,12 +38,14 @@ fn main() {
             key_name,
             no_commit,
             trusted,
+            from,
             gpg_user_id,
         } => commands::add_gpg_user::add_gpg_user(
             key_name.as_deref(),
             no_commit,
             trusted,
-            &gpg_user_id,
+            gpg_user_id.as_deref(),
+            from.as_deref(),
         ),
 
         Commands::ExportKey {
@@ -64,7 +67,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("{} {}", "error:".red().bold(), e);
         process::exit(1);
     }
 }

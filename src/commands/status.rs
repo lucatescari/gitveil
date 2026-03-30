@@ -1,12 +1,17 @@
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 
-use crate::constants::ENCRYPTED_FILE_HEADER;
+use colored::Colorize;
+
+use crate::constants::{ENCRYPTED_FILE_HEADER, ENCRYPTED_FILE_HEADER_LEN};
 use crate::error::GitVeilError;
 
 /// Display the encryption status of tracked files.
-/// Uses `git check-attr -z --stdin` to batch-check all files in a single subprocess,
-/// with NUL-delimited output to avoid ambiguity with special filenames.
+///
+/// Performance: uses only 3 subprocesses regardless of repo size:
+/// 1. `git ls-files` — list all tracked files
+/// 2. `git check-attr -z --stdin` — batch-check filter attributes
+/// 3. `git cat-file --batch` — batch-check blob headers for encryption
 pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result<(), GitVeilError> {
     // Get all tracked files
     let ls_output = Command::new("git")
@@ -28,19 +33,23 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
     // Batch check attributes using -z --stdin (NUL-delimited, single subprocess)
     let git_crypt_files = get_git_crypt_files(&all_files)?;
 
+    if git_crypt_files.is_empty() {
+        return Ok(());
+    }
+
+    // Batch check which blobs are actually encrypted (single subprocess)
+    let encrypted_flags = batch_check_blobs_encrypted(&git_crypt_files)?;
+
     let mut files_to_fix = Vec::new();
 
-    for file in &git_crypt_files {
-        // Check if the blob in the index is actually encrypted
-        let is_encrypted = check_blob_encrypted(file)?;
-
-        if is_encrypted {
+    for (file, is_encrypted) in git_crypt_files.iter().zip(encrypted_flags.iter()) {
+        if *is_encrypted {
             if !unencrypted_only {
-                println!("    encrypted: {}", file);
+                println!("  {} {}", "encrypted:".green(), file);
             }
         } else {
             if !encrypted_only {
-                println!("not encrypted: {}", file);
+                println!("{} {}", "not encrypted:".yellow(), file);
             }
             if fix {
                 files_to_fix.push(file.clone());
@@ -49,7 +58,7 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
     }
 
     if fix && !files_to_fix.is_empty() {
-        eprintln!("Fixing {} file(s)...", files_to_fix.len());
+        eprintln!("{} {} file(s)...", "Fixing".cyan().bold(), files_to_fix.len());
         for file in &files_to_fix {
             let status = Command::new("git")
                 .args(["add", "--", file])
@@ -57,10 +66,10 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
                 .map_err(|e| GitVeilError::Git(format!("failed to stage {}: {}", file, e)))?;
 
             if !status.success() {
-                eprintln!("Warning: failed to stage {}", file);
+                eprintln!("{} failed to stage {}", "warning:".yellow().bold(), file);
             }
         }
-        eprintln!("Done. Run 'git commit' to save the re-encrypted files.");
+        eprintln!("{} Run '{}' to save the re-encrypted files.", "Done.".green().bold(), "git commit".bold());
     }
 
     Ok(())
@@ -77,9 +86,10 @@ fn get_git_crypt_files(files: &[&str]) -> Result<Vec<String>, GitVeilError> {
         .spawn()
         .map_err(|e| GitVeilError::Git(format!("failed to run git check-attr: {}", e)))?;
 
+    // With -z, stdin expects NUL-terminated pathnames (not newline-terminated)
     if let Some(ref mut stdin) = child.stdin {
         for file in files {
-            writeln!(stdin, "{}", file).map_err(|e| {
+            write!(stdin, "{}\0", file).map_err(|e| {
                 GitVeilError::Git(format!("failed to write to git check-attr stdin: {}", e))
             })?;
         }
@@ -114,17 +124,102 @@ fn get_git_crypt_files(files: &[&str]) -> Result<Vec<String>, GitVeilError> {
     Ok(result)
 }
 
-/// Check if a file's blob in the git index starts with the encrypted file header.
-fn check_blob_encrypted(file: &str) -> Result<bool, GitVeilError> {
-    let output = Command::new("git")
-        .args(["show", &format!(":{}", file)])
-        .output()
-        .map_err(|e| GitVeilError::Git(format!("failed to read blob: {}", e)))?;
+/// Batch-check whether blobs in the index are encrypted using a single
+/// `git cat-file --batch` subprocess instead of spawning one per file.
+///
+/// The cat-file batch protocol:
+///   Input:  `:<path>\n` (index entry for path)
+///   Output: `<sha> blob <size>\n<content>\n`  — or `:<path> missing\n`
+///
+/// We only need the first 10 bytes of each blob to check for the
+/// `\0GITCRYPT\0` header. Remaining blob bytes are drained to `io::sink()`
+/// so large files don't consume memory.
+fn batch_check_blobs_encrypted(files: &[String]) -> Result<Vec<bool>, GitVeilError> {
+    let mut child = Command::new("git")
+        .args(["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| GitVeilError::Git(format!("failed to run git cat-file --batch: {}", e)))?;
 
-    if !output.status.success() {
-        // File might not be staged yet
-        return Ok(false);
+    let mut stdin = child.stdin.take().ok_or_else(|| {
+        GitVeilError::Git("failed to open cat-file stdin".into())
+    })?;
+
+    // Write all queries upfront, then close stdin so cat-file can flush
+    for file in files {
+        writeln!(stdin, ":{}", file).map_err(|e| {
+            GitVeilError::Git(format!("failed to write to cat-file stdin: {}", e))
+        })?;
+    }
+    drop(stdin);
+
+    let stdout = child.stdout.take().ok_or_else(|| {
+        GitVeilError::Git("failed to open cat-file stdout".into())
+    })?;
+    let mut reader = BufReader::new(stdout);
+    let mut results = Vec::with_capacity(files.len());
+
+    for _ in files {
+        // Read the response header line: "<sha> blob <size>\n" or ":<path> missing\n"
+        let mut header_line = String::new();
+        reader.read_line(&mut header_line).map_err(|e| {
+            GitVeilError::Git(format!("failed to read cat-file header: {}", e))
+        })?;
+
+        let header_line = header_line.trim_end_matches('\n');
+
+        if header_line.ends_with(" missing") {
+            // File not in index
+            results.push(false);
+            continue;
+        }
+
+        // Parse "<sha> blob <size>"
+        let size: usize = header_line
+            .rsplit_once(' ')
+            .and_then(|(_, s)| s.parse().ok())
+            .ok_or_else(|| {
+                GitVeilError::Git(format!(
+                    "unexpected cat-file header: {}",
+                    header_line
+                ))
+            })?;
+
+        if size < ENCRYPTED_FILE_HEADER_LEN {
+            // Too small to contain the header — not encrypted
+            // Drain the content + trailing newline
+            drain_bytes(&mut reader, size + 1)?;
+            results.push(false);
+            continue;
+        }
+
+        // Read just the header bytes we need
+        let mut header_buf = [0u8; ENCRYPTED_FILE_HEADER_LEN];
+        reader.read_exact(&mut header_buf).map_err(|e| {
+            GitVeilError::Git(format!("failed to read blob header: {}", e))
+        })?;
+
+        let is_encrypted = header_buf == ENCRYPTED_FILE_HEADER;
+
+        // Drain the remaining blob bytes + trailing newline
+        let remaining = size - ENCRYPTED_FILE_HEADER_LEN + 1;
+        drain_bytes(&mut reader, remaining)?;
+
+        results.push(is_encrypted);
     }
 
-    Ok(output.stdout.starts_with(ENCRYPTED_FILE_HEADER))
+    // Wait for cat-file to exit
+    let _ = child.wait();
+
+    Ok(results)
+}
+
+/// Drain `count` bytes from a reader by copying to sink.
+/// Avoids allocating a buffer for large blobs.
+fn drain_bytes(reader: &mut impl Read, count: usize) -> Result<(), GitVeilError> {
+    std::io::copy(&mut reader.take(count as u64), &mut std::io::sink())
+        .map_err(|e| GitVeilError::Git(format!("failed to drain cat-file output: {}", e)))?;
+    Ok(())
 }

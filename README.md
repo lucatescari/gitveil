@@ -164,7 +164,7 @@ Without arguments, attempts GPG-based unlock using keys in `.git-crypt/`. With k
 Add a GPG user as a collaborator.
 
 ```
-gitveil add-gpg-user [-k <key-name>] [-n] [--trusted] <GPG_USER_ID>
+gitveil add-gpg-user [-k <key-name>] [-n] [--trusted] [--from <path>] [<GPG_USER_ID>]
 ```
 
 | Option | Description |
@@ -172,6 +172,21 @@ gitveil add-gpg-user [-k <key-name>] [-n] [--trusted] <GPG_USER_ID>
 | `-k, --key-name` | Use a specific named key |
 | `-n, --no-commit` | Don't auto-commit the GPG-encrypted key |
 | `--trusted` | Skip GPG Web of Trust verification |
+| `--from <path>` | Import GPG key(s) from a file or directory (see below) |
+
+#### Import keys from a shared keyring
+
+If your team stores GPG public keys in a shared repository, you can import them directly:
+
+```bash
+# Import a single key file
+gitveil add-gpg-user --from /path/to/keys/alice.asc
+
+# Browse a directory and pick interactively
+gitveil add-gpg-user --from /path/to/keys/
+```
+
+When pointing at a directory, gitveil scans for `.asc`, `.gpg`, `.pub`, and `.key` files, shows a list of found keys (name, email, fingerprint), and lets you select one or more to add as collaborators.
 
 ### `gitveil export-key`
 
@@ -268,4 +283,4 @@ src/
 
 ## License
 
-GPL-3.0 -- same as the original git-crypt.
+GPL-3.0

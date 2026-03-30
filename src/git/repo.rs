@@ -34,16 +34,6 @@ pub fn find_repo_root() -> Result<PathBuf, GitVeilError> {
     Ok(PathBuf::from(path))
 }
 
-/// Check if the current directory is inside a git repository.
-#[allow(dead_code)]
-pub fn is_git_repo() -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// Check if the working tree is clean (no uncommitted changes).
 pub fn is_working_tree_clean() -> Result<bool, GitVeilError> {
     let output = Command::new("git")
@@ -105,9 +95,10 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
         .spawn()
         .map_err(|e| GitVeilError::Git(format!("failed to run git check-attr: {}", e)))?;
 
+    // With -z, stdin expects NUL-terminated pathnames (not newline-terminated)
     if let Some(ref mut stdin) = child.stdin {
         for file in &all_files {
-            writeln!(stdin, "{}", file).map_err(|e| {
+            write!(stdin, "{}\0", file).map_err(|e| {
                 GitVeilError::Git(format!("failed to write to git check-attr stdin: {}", e))
             })?;
         }

@@ -21,6 +21,14 @@ pub fn compute_hmac_sha1(hmac_key: &[u8; HMAC_KEY_LEN], data: &[u8]) -> [u8; 20]
 /// Derive a 12-byte nonce from the HMAC-SHA1 of plaintext.
 /// This is the deterministic IV used for AES-256-CTR encryption,
 /// ensuring identical plaintext produces identical ciphertext (required by git).
+///
+/// # Security
+///
+/// Deterministic encryption means an attacker can tell if two files have
+/// identical content (same ciphertext = same plaintext). This is an inherent
+/// trade-off: git's content-addressable storage requires deterministic output
+/// to avoid spurious diffs. HMAC-SHA1 remains secure for PRF/MAC usage despite
+/// SHA-1's collision weakness.
 pub fn derive_nonce(hmac_key: &[u8; HMAC_KEY_LEN], plaintext: &[u8]) -> [u8; NONCE_LEN] {
     let digest = compute_hmac_sha1(hmac_key, plaintext);
     let mut nonce = [0u8; NONCE_LEN];

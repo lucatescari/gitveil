@@ -1,6 +1,8 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
+use colored::Colorize;
+
 use crate::error::GitVeilError;
 use crate::git::checkout::force_checkout_files;
 use crate::git::config::configure_filters;
@@ -31,7 +33,7 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
                 force_checkout_files(&files)?;
             }
 
-            eprintln!("Unlocked key '{}'.", key_name);
+            eprintln!("{} key '{}'.", "Unlocked".green().bold(), key_name.bold());
         }
     } else {
         // GPG-based unlock
@@ -43,13 +45,14 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
         }
 
         let keys_dir = crypt_dir.join("keys");
-        if !keys_dir.exists() {
+        if !keys_dir.is_dir() {
             return Err(GitVeilError::NotInitialized);
         }
 
         let mut unlocked_any = false;
+        let mut last_gpg_error: Option<String> = None;
 
-        // Iterate over key directories
+        // Iterate over key directories (skip symlinks)
         let key_dirs: Vec<_> = std::fs::read_dir(&keys_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
@@ -80,12 +83,12 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
                             force_checkout_files(&files)?;
                         }
 
-                        eprintln!("Unlocked key '{}' via GPG.", key_name);
+                        eprintln!("{} key '{}' via GPG.", "Unlocked".green().bold(), key_name.bold());
                         unlocked_any = true;
                         break;
                     }
-                    Err(_) => {
-                        // Try next GPG file
+                    Err(e) => {
+                        last_gpg_error = Some(format!("{}", e));
                         continue;
                     }
                 }
@@ -93,11 +96,14 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
         }
 
         if !unlocked_any {
-            return Err(GitVeilError::Gpg(
+            let detail = last_gpg_error
+                .map(|e| format!(" Last error: {}", e))
+                .unwrap_or_default();
+            return Err(GitVeilError::Gpg(format!(
                 "failed to decrypt any GPG-encrypted key. \
-                 Do you have the right GPG private key?"
-                    .into(),
-            ));
+                 Do you have the right GPG private key?{}",
+                detail
+            )));
         }
     }
 
@@ -105,14 +111,21 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
 }
 
 /// Recursively find .gpg files in a directory.
+/// Skips symlinks to prevent traversal outside the repository.
 fn find_gpg_files(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.filter_map(|e| e.ok()) {
+            // DirEntry::file_type() does not follow symlinks, so
+            // is_dir()/is_file() return false for symlinks.
+            let ft = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
             let path = entry.path();
-            if path.is_dir() {
+            if ft.is_dir() {
                 files.extend(find_gpg_files(&path));
-            } else if path.extension().map(|e| e == "gpg").unwrap_or(false) {
+            } else if ft.is_file() && path.extension().map(|e| e == "gpg").unwrap_or(false) {
                 files.push(path);
             }
         }
