@@ -14,7 +14,7 @@ use crate::key::key_file::KeyFile;
 ///
 /// If key_files are provided, load symmetric keys from them.
 /// Otherwise, attempt GPG-based unlock using keys in .git-crypt/.
-pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
+pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
     let git_dir = find_git_dir()?;
 
     if !key_files.is_empty() {
@@ -33,7 +33,9 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
                 force_checkout_files(&files)?;
             }
 
-            eprintln!("{} key '{}'.", "Unlocked".green().bold(), key_name.bold());
+            if !quiet {
+                eprintln!("{} key '{}'.", "Unlocked".green().bold(), key_name.bold());
+            }
         }
     } else {
         // GPG-based unlock
@@ -83,7 +85,9 @@ pub fn unlock(key_files: &[PathBuf]) -> Result<(), GitVeilError> {
                             force_checkout_files(&files)?;
                         }
 
-                        eprintln!("{} key '{}' via GPG.", "Unlocked".green().bold(), key_name.bold());
+                        if !quiet {
+                            eprintln!("{} key '{}' via GPG.", "Unlocked".green().bold(), key_name.bold());
+                        }
                         unlocked_any = true;
                         break;
                     }

@@ -9,6 +9,10 @@ use clap::{Parser, Subcommand};
     version
 )]
 pub struct Cli {
+    /// Suppress all informational output
+    #[arg(short, long, global = true)]
+    pub quiet: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }

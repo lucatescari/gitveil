@@ -57,7 +57,7 @@ impl KeyFile {
             .read_exact(&mut header)
             .map_err(|_| GitVeilError::InvalidKeyFile("file too short for header".into()))?;
 
-        if &header != KEY_FILE_HEADER {
+        if header != KEY_FILE_HEADER {
             return Err(GitVeilError::InvalidKeyFile(
                 "invalid magic header".into(),
             ));

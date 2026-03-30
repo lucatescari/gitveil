@@ -22,17 +22,18 @@ use key::key_file::KeyFile;
 
 fn main() {
     let cli = Cli::parse();
+    let quiet = cli.quiet;
 
     let result = match cli.command {
-        Commands::Init { key_name } => commands::init::init(key_name.as_deref()),
+        Commands::Init { key_name } => commands::init::init(key_name.as_deref(), quiet),
 
         Commands::Lock {
             key_name,
             all,
             force,
-        } => commands::lock::lock(key_name.as_deref(), all, force),
+        } => commands::lock::lock(key_name.as_deref(), all, force, quiet),
 
-        Commands::Unlock { key_files } => commands::unlock::unlock(&key_files),
+        Commands::Unlock { key_files } => commands::unlock::unlock(&key_files, quiet),
 
         Commands::AddGpgUser {
             key_name,
@@ -51,7 +52,7 @@ fn main() {
         Commands::ExportKey {
             key_name,
             output_file,
-        } => commands::export_key::export_key(key_name.as_deref(), output_file.as_ref()),
+        } => commands::export_key::export_key(key_name.as_deref(), output_file.as_ref(), quiet),
 
         Commands::Status {
             encrypted_only,

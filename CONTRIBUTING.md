@@ -13,8 +13,8 @@ Thanks for your interest in contributing to gitveil! This document covers what y
 ### Building
 
 ```bash
-git clone <this-repo>
-cd git-crypt-rust
+git clone https://github.com/lucatescari/gitveil.git
+cd gitveil
 cargo build
 ```
 
@@ -24,12 +24,13 @@ cargo build
 cargo test
 ```
 
-All 24 unit tests should pass. They cover:
+All 27 unit tests should pass. They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
-- Clean/smudge filter round-trips
+- Clean/smudge/diff filter round-trips
 - Non-encrypted passthrough behavior
+- Key name validation
 
 ### Running Manually
 
@@ -49,13 +50,15 @@ src/
   crypto/       Core cryptography (AES-CTR, HMAC-SHA1, random)
   key/          Key file format (TLV serialization, entries, key container)
   filter/       Git clean/smudge/diff filters
-  commands/     User-facing commands (init, lock, unlock, etc.)
+  commands/     User-facing commands (init, lock, unlock, status, etc.)
   git/          Git repository helpers (config, checkout, repo inspection)
-  gpg/          GPG integration (shells out to gpg)
+  gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI)
   cli.rs        clap CLI definitions
   constants.rs  Shared constants (magic bytes, sizes, field IDs)
   error.rs      Error types
   main.rs       Entry point
+scripts/
+  release.sh    Automated release + Homebrew formula update
 ```
 
 ## Development Guidelines
@@ -78,9 +81,9 @@ This is the most important constraint. Gitveil must remain **byte-compatible** w
 
 ### Error Handling
 
-- Library modules (`crypto/`, `key/`, `filter/`) use `GitVeilError` from `error.rs`
-- Command handlers use `anyhow::Result` is available but currently we propagate `GitVeilError` directly
+- All modules use `GitVeilError` from `error.rs` with `thiserror` derive
 - User-facing error messages should be clear and actionable
+- Errors are printed in red via `colored` in `main.rs`
 
 ### Security
 
@@ -100,30 +103,6 @@ This is the most important constraint. Gitveil must remain **byte-compatible** w
 - Unit tests go in `#[cfg(test)] mod tests` blocks within the relevant source file
 - Integration tests that need a real git repo should go in a `tests/` directory
 - For crypto tests, use known-answer vectors where possible
-
-## What to Work On
-
-Here are areas where contributions would be especially welcome:
-
-### Good First Issues
-
-- Add `--version` info to the `init` output message
-- Improve error messages (e.g., suggest running `gitveil init` when the repo isn't initialized)
-- Add `--quiet` / `--verbose` flags
-
-### Medium
-
-- Integration tests using temporary git repos (`tempfile` crate)
-- Support for the legacy key format (pre-FORMAT_VERSION 2)
-- `gitveil refresh` command to update filter configuration
-- Shell completions (clap supports generating them)
-
-### Larger
-
-- Cross-compatibility test suite (encrypt with git-crypt, decrypt with gitveil, and vice versa)
-- `gitveil ls-gpg-users` and `gitveil rm-gpg-user` commands
-- Windows support (path separator handling, GPG path detection)
-- CI/CD pipeline with automated testing
 
 ## Submitting Changes
 

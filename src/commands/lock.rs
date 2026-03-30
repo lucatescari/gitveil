@@ -7,7 +7,7 @@ use crate::git::config::deconfigure_filters;
 use crate::git::repo::{find_git_dir, get_encrypted_files, is_working_tree_clean, key_path};
 
 /// Lock the repository: remove keys, deconfigure filters, and re-encrypt working copy.
-pub fn lock(key_name: Option<&str>, all: bool, force: bool) -> Result<(), GitVeilError> {
+pub fn lock(key_name: Option<&str>, all: bool, force: bool, quiet: bool) -> Result<(), GitVeilError> {
     let git_dir = find_git_dir()?;
 
     if !force && !is_working_tree_clean()? {
@@ -36,17 +36,17 @@ pub fn lock(key_name: Option<&str>, all: bool, force: bool) -> Result<(), GitVei
 
         for entry in key_dirs {
             let name = entry.file_name().to_string_lossy().to_string();
-            lock_single_key(&name, &git_dir)?;
+            lock_single_key(&name, &git_dir, quiet)?;
         }
     } else {
         let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
-        lock_single_key(key_name, &git_dir)?;
+        lock_single_key(key_name, &git_dir, quiet)?;
     }
 
     Ok(())
 }
 
-fn lock_single_key(key_name: &str, git_dir: &std::path::Path) -> Result<(), GitVeilError> {
+fn lock_single_key(key_name: &str, git_dir: &std::path::Path, quiet: bool) -> Result<(), GitVeilError> {
     let kp = key_path(git_dir, key_name);
 
     if !kp.exists() {
@@ -76,6 +76,8 @@ fn lock_single_key(key_name: &str, git_dir: &std::path::Path) -> Result<(), GitV
         force_checkout_files(&files)?;
     }
 
-    eprintln!("{} key '{}'.", "Locked".yellow().bold(), key_name.bold());
+    if !quiet {
+        eprintln!("{} key '{}'.", "Locked".yellow().bold(), key_name.bold());
+    }
     Ok(())
 }
