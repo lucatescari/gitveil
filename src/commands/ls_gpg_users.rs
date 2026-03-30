@@ -71,7 +71,10 @@ fn list_users_for_key(keys_dir: &Path, key_name: &str) -> Result<(), GitVeilErro
         .filter_map(|e| e.ok())
         .filter(|e| {
             e.file_type().map(|t| t.is_file()).unwrap_or(false)
-                && e.path().extension().map(|ext| ext == "gpg").unwrap_or(false)
+                && e.path()
+                    .extension()
+                    .map(|ext| ext == "gpg")
+                    .unwrap_or(false)
         })
         .collect();
 
