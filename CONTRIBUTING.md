@@ -104,32 +104,6 @@ This is the most important constraint. Gitveil must remain **byte-compatible** w
 - Integration tests that need a real git repo should go in a `tests/` directory
 - For crypto tests, use known-answer vectors where possible
 
-## What to Work On
-
-Here are areas where contributions would be especially welcome:
-
-### Good First Issues
-
-- Add `--quiet` / `--verbose` flags
-- Improve error messages (e.g., suggest running `gitveil init` when the repo isn't initialized)
-- Add `--version` info to the `init` output message
-
-### Medium
-
-- Integration tests using temporary git repos (`tempfile` crate)
-- Shell completions (clap supports generating them)
-- `gitveil refresh` command to update filter configuration
-- Support for the legacy key format (pre-FORMAT_VERSION 2)
-- `gitveil rm-gpg-user` command
-
-### Larger
-
-- Cross-compatibility test suite (encrypt with git-crypt, decrypt with gitveil, and vice versa)
-- `gitveil ls-gpg-users` command (list who has access)
-- Windows support (path separator handling, GPG path detection)
-- CI/CD pipeline with automated testing
-- Support `--from` with a git repo URL (clone to temp dir, scan, pick)
-
 ## Submitting Changes
 
 1. Fork the repository

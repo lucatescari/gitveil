@@ -15,13 +15,13 @@ pub enum GitVeilError {
     #[error("Git error: {0}")]
     Git(String),
 
-    #[error("Not a git repository")]
+    #[error("Not a git repository. Run this command inside a git repo.")]
     NotAGitRepo,
 
     #[error("Already initialized for key '{0}'")]
     AlreadyInitialized(String),
 
-    #[error("Not initialized")]
+    #[error("Not initialized. Run 'gitveil init' first.")]
     NotInitialized,
 
     #[error("Working directory is dirty; use --force to override")]
