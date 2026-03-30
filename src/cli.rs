@@ -100,6 +100,22 @@ pub enum Commands {
         fix: bool,
     },
 
+    /// Remove a GPG user's access to the repository
+    #[command(name = "rm-gpg-user")]
+    RmGpgUser {
+        /// Use a specific named key
+        #[arg(short = 'k', long = "key-name")]
+        key_name: Option<String>,
+
+        /// Don't automatically commit the removal
+        #[arg(short = 'n', long = "no-commit")]
+        no_commit: bool,
+
+        /// GPG user ID (email, key ID, or fingerprint) to remove
+        #[arg()]
+        gpg_user_id: String,
+    },
+
     /// List GPG users who have access to the repository
     #[command(name = "ls-gpg-users")]
     LsGpgUsers {
