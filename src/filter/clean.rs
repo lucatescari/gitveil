@@ -1,4 +1,5 @@
 use std::io::{Cursor, Read, Write};
+use zeroize::Zeroizing;
 
 use crate::constants::*;
 use crate::crypto::aes_ctr;
@@ -28,7 +29,7 @@ pub fn clean(
     // usage is proportional to file size. For very large files (multi-GiB), this
     // could be problematic; a future optimization could stream the HMAC computation
     // and then re-read from a temp file for encryption.
-    let mut plaintext = Vec::new();
+    let mut plaintext = Zeroizing::new(Vec::new());
     input.read_to_end(&mut plaintext)?;
 
     // Derive deterministic nonce from HMAC-SHA1
