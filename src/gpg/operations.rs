@@ -104,12 +104,7 @@ pub fn gpg_encrypt_to_file(
         cmd.args(["--trust-model", "always"]);
     }
 
-    cmd.args([
-        "-e",
-        "-r",
-        &format!("0x{}", fingerprint),
-        "-o",
-    ]);
+    cmd.args(["-e", "-r", &format!("0x{}", fingerprint), "-o"]);
     cmd.arg(output_path);
     cmd.stdin(Stdio::piped());
 

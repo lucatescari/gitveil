@@ -51,9 +51,7 @@ pub fn smudge(
         return Ok(());
     }
 
-    let entry = key_file
-        .latest()
-        .ok_or(GitVeilError::NoKeyEntries)?;
+    let entry = key_file.latest().ok_or(GitVeilError::NoKeyEntries)?;
 
     // Read nonce
     let mut nonce = [0u8; NONCE_LEN];

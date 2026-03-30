@@ -106,9 +106,8 @@ fn run_diff(key_name: Option<&str>, file: Option<PathBuf>) -> Result<(), error::
     let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
     let kf = load_key_file(key_name)?;
 
-    let file_path = file.ok_or_else(|| {
-        error::GitVeilError::Other("diff command requires a file path".into())
-    })?;
+    let file_path =
+        file.ok_or_else(|| error::GitVeilError::Other("diff command requires a file path".into()))?;
 
     let mut stdout = io::stdout().lock();
     filter::diff::diff(&file_path, &mut stdout, &kf)

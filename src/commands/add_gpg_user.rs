@@ -66,7 +66,14 @@ fn add_from_path(
             info.fingerprint.dimmed()
         );
         import_key_file(from_path)?;
-        add_by_fingerprint(key_name, no_commit, trusted, &info.fingerprint, &info.uid, git_dir)?;
+        add_by_fingerprint(
+            key_name,
+            no_commit,
+            trusted,
+            &info.fingerprint,
+            &info.uid,
+            git_dir,
+        )?;
     } else if from_path.is_dir() {
         // Directory: scan, pick, import, add each
         let keys = scan_key_directory(from_path)?;
@@ -112,7 +119,14 @@ fn add_single_user(
     let fingerprints = gpg_get_fingerprints(gpg_user_id)?;
     let fingerprint = &fingerprints[0];
 
-    add_by_fingerprint(key_name, no_commit, trusted, fingerprint, gpg_user_id, git_dir)
+    add_by_fingerprint(
+        key_name,
+        no_commit,
+        trusted,
+        fingerprint,
+        gpg_user_id,
+        git_dir,
+    )
 }
 
 /// Core logic: encrypt the repo key to a GPG fingerprint and optionally commit.
@@ -190,7 +204,12 @@ fn add_by_fingerprint(
         "{} GPG user {} (fingerprint: {}) for key '{}'.",
         "Added".green().bold(),
         display_name.bold(),
-        if fingerprint.len() >= 16 { &fingerprint[..16] } else { fingerprint }.dimmed(),
+        if fingerprint.len() >= 16 {
+            &fingerprint[..16]
+        } else {
+            fingerprint
+        }
+        .dimmed(),
         key_name.bold()
     );
 
