@@ -60,6 +60,10 @@ fn main() {
             fix,
         } => commands::status::status(encrypted_only, unencrypted_only, fix),
 
+        Commands::LsGpgUsers { key_name } => {
+            commands::ls_gpg_users::ls_gpg_users(key_name.as_deref())
+        }
+
         Commands::Completions { shell } => {
             cli::print_completions(shell);
             Ok(())
