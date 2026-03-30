@@ -41,7 +41,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Unit tests
-        run: cargo test --lib
+        run: cargo test --bin gitveil
 
       - name: Integration tests
         run: cargo test --test integration
