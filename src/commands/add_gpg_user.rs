@@ -37,7 +37,13 @@ pub fn add_gpg_user(
             if is_git_url(from_value) {
                 add_from_git_url(key_name, no_commit, trusted, from_value, &git_dir)?;
             } else {
-                add_from_path(key_name, no_commit, trusted, Path::new(from_value), &git_dir)?;
+                add_from_path(
+                    key_name,
+                    no_commit,
+                    trusted,
+                    Path::new(from_value),
+                    &git_dir,
+                )?;
             }
         }
         None => {
