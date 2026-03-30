@@ -53,15 +53,19 @@ src/
   crypto/       Core cryptography (AES-CTR, HMAC-SHA1, random)
   key/          Key file format (TLV serialization, entries, key container)
   filter/       Git clean/smudge/diff filters
-  commands/     User-facing commands (init, lock, unlock, status, etc.)
+  commands/     User-facing commands (init, lock, unlock, status, ls/rm-gpg-users, etc.)
   git/          Git repository helpers (config, checkout, repo inspection)
   gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI)
-  cli.rs        clap CLI definitions
+  cli.rs        clap CLI definitions + shell completion generation
   constants.rs  Shared constants (magic bytes, sizes, field IDs)
   error.rs      Error types
   main.rs       Entry point
+tests/
+  integration.rs  E2E tests using temporary git repos
 scripts/
-  release.sh    Automated release + Homebrew formula update
+  release.sh      Automated release + Homebrew formula update
+.github/
+  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test)
 ```
 
 ## Development Guidelines

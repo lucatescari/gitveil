@@ -166,7 +166,7 @@ Without arguments, attempts GPG-based unlock using keys in `.git-crypt/`. With k
 Add a GPG user as a collaborator.
 
 ```
-gitveil add-gpg-user [-k <key-name>] [-n] [--trusted] [--from <path>] [<GPG_USER_ID>]
+gitveil add-gpg-user [-k <key-name>] [-n] [--trusted] [--from <source>] [<GPG_USER_ID>]
 ```
 
 | Option | Description |
@@ -174,7 +174,7 @@ gitveil add-gpg-user [-k <key-name>] [-n] [--trusted] [--from <path>] [<GPG_USER
 | `-k, --key-name` | Use a specific named key |
 | `-n, --no-commit` | Don't auto-commit the GPG-encrypted key |
 | `--trusted` | Skip GPG Web of Trust verification |
-| `--from <path>` | Import GPG key(s) from a file or directory (see below) |
+| `--from <source>` | Import GPG key(s) from a file, directory, or git URL |
 
 #### Import keys from a shared keyring
 
@@ -186,9 +186,47 @@ gitveil add-gpg-user --from /path/to/keys/alice.asc
 
 # Browse a directory and pick interactively
 gitveil add-gpg-user --from /path/to/keys/
+
+# Clone a git repo and pick from it
+gitveil add-gpg-user --from git@github.com:company/gpg-keys.git
 ```
 
-When pointing at a directory, gitveil scans for `.asc`, `.gpg`, `.pub`, and `.key` files, shows a list of found keys (name, email, fingerprint), and lets you select one or more to add as collaborators.
+When pointing at a directory (or git URL), gitveil scans for `.asc`, `.gpg`, `.pub`, and `.key` files, shows a list of found keys (name, email, fingerprint), and lets you select one or more to add as collaborators.
+
+### `gitveil rm-gpg-user`
+
+Remove a GPG user's access.
+
+```
+gitveil rm-gpg-user [-k <key-name>] [-n] <GPG_USER_ID>
+```
+
+| Option | Description |
+|--------|-------------|
+| `-k, --key-name` | Remove from a specific named key |
+| `-n, --no-commit` | Don't auto-commit the removal |
+
+Note: this only prevents future unlocks. For full revocation, rotate the key.
+
+### `gitveil ls-gpg-users`
+
+List GPG users who have access.
+
+```
+gitveil ls-gpg-users [-k <key-name>]
+```
+
+Shows each user's name, email, and fingerprint. Without `-k`, lists users for all keys.
+
+### `gitveil completions`
+
+Generate shell completions.
+
+```bash
+gitveil completions bash >> ~/.bashrc
+gitveil completions zsh > ~/.zfunc/_gitveil
+gitveil completions fish > ~/.config/fish/completions/gitveil.fish
+```
 
 ### `gitveil export-key`
 
