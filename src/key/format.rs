@@ -1,12 +1,20 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
+use zeroize::Zeroizing;
 
 use crate::constants::MAX_FIELD_LEN;
 use crate::error::GitVeilError;
 
+/// A TLV field: (field_id, field_data). Data is zeroized on drop.
+pub type TlvField = (u32, Zeroizing<Vec<u8>>);
+
 /// Read a TLV field from the stream.
 /// Returns (field_id, field_data). Returns None at EOF.
-pub fn read_field(reader: &mut dyn Read) -> Result<Option<(u32, Vec<u8>)>, GitVeilError> {
+///
+/// The returned `Vec<u8>` is wrapped in `Zeroizing` so that key material
+/// (AES keys, HMAC keys) is automatically scrubbed from memory when the
+/// caller drops the buffer after copying into fixed-size arrays.
+pub fn read_field(reader: &mut dyn Read) -> Result<Option<TlvField>, GitVeilError> {
     let field_id = match reader.read_u32::<BigEndian>() {
         Ok(id) => id,
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
@@ -25,7 +33,7 @@ pub fn read_field(reader: &mut dyn Read) -> Result<Option<(u32, Vec<u8>)>, GitVe
         )));
     }
 
-    let mut data = vec![0u8; field_len];
+    let mut data = Zeroizing::new(vec![0u8; field_len]);
     reader
         .read_exact(&mut data)
         .map_err(|_| GitVeilError::InvalidKeyFile("truncated field data".into()))?;
@@ -72,7 +80,7 @@ mod tests {
         let mut cursor = Cursor::new(&buf);
         let (id, data) = read_field(&mut cursor).unwrap().unwrap();
         assert_eq!(id, 42);
-        assert_eq!(data, b"hello");
+        assert_eq!(*data, b"hello");
     }
 
     #[test]

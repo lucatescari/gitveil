@@ -84,7 +84,7 @@ impl KeyFile {
             match field_id {
                 HEADER_FIELD_END => break,
                 HEADER_FIELD_KEY_NAME => {
-                    let name = String::from_utf8(data).map_err(|_| {
+                    let name = String::from_utf8((*data).clone()).map_err(|_| {
                         GitVeilError::InvalidKeyFile("key name is not valid UTF-8".into())
                     })?;
                     if !name.is_empty() {
@@ -167,6 +167,11 @@ impl KeyFile {
                 .mode(0o600)
                 .open(path)?;
             file.write_all(&buf)?;
+
+            // Enforce 0600 even if the file already existed with looser permissions.
+            // OpenOptions::mode() only applies to newly created files.
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
         #[cfg(not(unix))]
         {
