@@ -9,7 +9,7 @@ use crate::git::repo::{find_git_dir, key_path};
 use crate::key::key_file::KeyFile;
 
 /// Export the symmetric key to a file or stdout.
-pub fn export_key(key_name: Option<&str>, output_file: Option<&PathBuf>) -> Result<(), GitVeilError> {
+pub fn export_key(key_name: Option<&str>, output_file: Option<&PathBuf>, quiet: bool) -> Result<(), GitVeilError> {
     let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
     let git_dir = find_git_dir()?;
     let kp = key_path(&git_dir, key_name);
@@ -23,12 +23,14 @@ pub fn export_key(key_name: Option<&str>, output_file: Option<&PathBuf>) -> Resu
     match output_file {
         Some(path) => {
             kf.store_to_file(path)?;
-            eprintln!(
-                "Key '{}' {} to {}.",
-                key_name.bold(),
-                "exported".green().bold(),
-                path.display().to_string().dimmed()
-            );
+            if !quiet {
+                eprintln!(
+                    "Key '{}' {} to {}.",
+                    key_name.bold(),
+                    "exported".green().bold(),
+                    path.display().to_string().dimmed()
+                );
+            }
         }
         None => {
             // Write to stdout
