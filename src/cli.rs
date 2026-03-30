@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(
@@ -99,6 +100,13 @@ pub enum Commands {
         fix: bool,
     },
 
+    /// Generate shell completions for bash, zsh, or fish
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
     // -- Plumbing commands (invoked by git, not the user) --
     /// [plumbing] Encrypt stdin (clean filter)
     #[command(hide = true)]
@@ -127,4 +135,14 @@ pub enum Commands {
         #[arg()]
         file: Option<PathBuf>,
     },
+}
+
+/// Generate shell completions and write to stdout.
+pub fn print_completions(shell: Shell) {
+    clap_complete::generate(
+        shell,
+        &mut Cli::command(),
+        "gitveil",
+        &mut std::io::stdout(),
+    );
 }
