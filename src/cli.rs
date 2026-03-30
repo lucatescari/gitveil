@@ -100,6 +100,14 @@ pub enum Commands {
         fix: bool,
     },
 
+    /// List GPG users who have access to the repository
+    #[command(name = "ls-gpg-users")]
+    LsGpgUsers {
+        /// List users for a specific named key only
+        #[arg(short = 'k', long = "key-name")]
+        key_name: Option<String>,
+    },
+
     /// Generate shell completions for bash, zsh, or fish
     Completions {
         /// Shell to generate completions for
