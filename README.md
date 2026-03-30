@@ -283,4 +283,4 @@ src/
 
 ## License
 
-GPL-3.0 -- same as the original git-crypt.
+GPL-3.0
