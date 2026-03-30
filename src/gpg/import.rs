@@ -144,7 +144,12 @@ pub fn pick_keys(keys: &[GpgKeyInfo]) -> Result<Vec<usize>, GitVeilError> {
     for (i, key) in keys.iter().enumerate() {
         let num = format!("  {:>3})", i + 1).cyan().bold();
         let uid = key.uid.bold();
-        let fp = format!("({}...)", &key.fingerprint[..16]).dimmed();
+        let fp_short = if key.fingerprint.len() >= 16 {
+            &key.fingerprint[..16]
+        } else {
+            &key.fingerprint
+        };
+        let fp = format!("({}...)", fp_short).dimmed();
         let file = key
             .path
             .file_name()
