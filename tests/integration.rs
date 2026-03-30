@@ -85,12 +85,13 @@ fn test_init_creates_key_and_configures_filters() {
     assert_success(&out, "gitveil init");
 
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("Initialized"), "init should print confirmation");
+    assert!(
+        stderr.contains("Initialized"),
+        "init should print confirmation"
+    );
 
     // Key file should exist with restricted permissions
-    let key_path = dir
-        .path()
-        .join(".git/git-crypt/keys/default");
+    let key_path = dir.path().join(".git/git-crypt/keys/default");
     assert!(key_path.exists(), "key file should exist at {:?}", key_path);
 
     #[cfg(unix)]
@@ -104,7 +105,10 @@ fn test_init_creates_key_and_configures_filters() {
     let filter = git(dir.path(), &["config", "--get", "filter.git-crypt.smudge"]);
     assert_success(&filter, "filter.git-crypt.smudge should be set");
     let smudge = String::from_utf8_lossy(&filter.stdout);
-    assert!(smudge.contains("smudge"), "smudge filter should contain 'smudge'");
+    assert!(
+        smudge.contains("smudge"),
+        "smudge filter should contain 'smudge'"
+    );
 }
 
 #[test]
@@ -114,10 +118,7 @@ fn test_init_twice_fails() {
     assert_success(&gitveil(dir.path(), &["init"]), "first init");
 
     let out = gitveil(dir.path(), &["init"]);
-    assert!(
-        !out.status.success(),
-        "second init should fail"
-    );
+    assert!(!out.status.success(), "second init should fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Already initialized"),
@@ -189,10 +190,7 @@ fn test_full_encrypt_decrypt_roundtrip() {
     assert!(key_file.exists(), "exported key file should exist");
 
     // 6. Lock — working copy should become encrypted
-    assert_success(
-        &gitveil(dir.path(), &["lock", "--force"]),
-        "lock",
-    );
+    assert_success(&gitveil(dir.path(), &["lock", "--force"]), "lock");
     let locked_content = fs::read(dir.path().join("creds.secret")).unwrap();
     assert!(
         locked_content.starts_with(b"\x00GITCRYPT\x00"),
@@ -229,7 +227,13 @@ fn test_status_shows_encrypted_files() {
     assert_success(
         &git(
             dir.path(),
-            &["add", ".gitattributes", "a.secret", "b.secret", "public.txt"],
+            &[
+                "add",
+                ".gitattributes",
+                "a.secret",
+                "b.secret",
+                "public.txt",
+            ],
         ),
         "git add",
     );
@@ -474,7 +478,10 @@ fn test_lock_all_keys() {
 
     // Init two keys
     assert_success(&gitveil(dir.path(), &["init"]), "init default");
-    assert_success(&gitveil(dir.path(), &["init", "-k", "backend"]), "init backend");
+    assert_success(
+        &gitveil(dir.path(), &["init", "-k", "backend"]),
+        "init backend",
+    );
 
     fs::write(
         dir.path().join(".gitattributes"),
@@ -495,7 +502,10 @@ fn test_lock_all_keys() {
         "export default key",
     );
     assert_success(
-        &gitveil(dir.path(), &["export-key", "-k", "backend", key_backend.to_str().unwrap()]),
+        &gitveil(
+            dir.path(),
+            &["export-key", "-k", "backend", key_backend.to_str().unwrap()],
+        ),
         "export backend key",
     );
 
@@ -508,6 +518,12 @@ fn test_lock_all_keys() {
     // Both should be encrypted
     let a = fs::read(dir.path().join("a.secret")).unwrap();
     let b = fs::read(dir.path().join("b.back")).unwrap();
-    assert!(a.starts_with(b"\x00GITCRYPT\x00"), "a.secret should be encrypted");
-    assert!(b.starts_with(b"\x00GITCRYPT\x00"), "b.back should be encrypted");
+    assert!(
+        a.starts_with(b"\x00GITCRYPT\x00"),
+        "a.secret should be encrypted"
+    );
+    assert!(
+        b.starts_with(b"\x00GITCRYPT\x00"),
+        "b.back should be encrypted"
+    );
 }

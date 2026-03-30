@@ -41,11 +41,18 @@ pub fn init(key_name: Option<&str>, quiet: bool) -> Result<(), GitVeilError> {
         );
         eprintln!("Add files to encrypt by specifying them in .gitattributes:");
         if key_name == DEFAULT_KEY_NAME {
-            eprintln!("  {}", "secretfile filter=git-crypt diff=git-crypt".dimmed());
+            eprintln!(
+                "  {}",
+                "secretfile filter=git-crypt diff=git-crypt".dimmed()
+            );
         } else {
             eprintln!(
                 "  {}",
-                format!("secretfile filter=git-crypt-{} diff=git-crypt-{}", key_name, key_name).dimmed()
+                format!(
+                    "secretfile filter=git-crypt-{} diff=git-crypt-{}",
+                    key_name, key_name
+                )
+                .dimmed()
             );
         }
     }

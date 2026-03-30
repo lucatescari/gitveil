@@ -20,9 +20,7 @@ pub fn clean(
     output: &mut dyn Write,
     key_file: &KeyFile,
 ) -> Result<(), GitVeilError> {
-    let entry = key_file
-        .latest()
-        .ok_or(GitVeilError::NoKeyEntries)?;
+    let entry = key_file.latest().ok_or(GitVeilError::NoKeyEntries)?;
 
     // Read all plaintext into memory. This is required because the deterministic
     // nonce is derived from HMAC-SHA1 of the entire file contents — we must hash
@@ -69,7 +67,10 @@ mod tests {
         // Check header
         assert!(output.starts_with(ENCRYPTED_FILE_HEADER));
         // Total: 10 (header) + 12 (nonce) + 13 (ciphertext) = 35
-        assert_eq!(output.len(), ENCRYPTED_FILE_HEADER_LEN + NONCE_LEN + plaintext.len());
+        assert_eq!(
+            output.len(),
+            ENCRYPTED_FILE_HEADER_LEN + NONCE_LEN + plaintext.len()
+        );
     }
 
     #[test]

@@ -95,8 +95,20 @@ mod tests {
         let mut ct1 = Vec::new();
         let mut ct2 = Vec::new();
 
-        process_stream(&mut Cursor::new(plaintext.as_slice()), &mut ct1, &key, &nonce).unwrap();
-        process_stream(&mut Cursor::new(plaintext.as_slice()), &mut ct2, &key, &nonce).unwrap();
+        process_stream(
+            &mut Cursor::new(plaintext.as_slice()),
+            &mut ct1,
+            &key,
+            &nonce,
+        )
+        .unwrap();
+        process_stream(
+            &mut Cursor::new(plaintext.as_slice()),
+            &mut ct2,
+            &key,
+            &nonce,
+        )
+        .unwrap();
 
         assert_eq!(ct1, ct2);
     }

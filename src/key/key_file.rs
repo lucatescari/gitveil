@@ -58,9 +58,7 @@ impl KeyFile {
             .map_err(|_| GitVeilError::InvalidKeyFile("file too short for header".into()))?;
 
         if header != KEY_FILE_HEADER {
-            return Err(GitVeilError::InvalidKeyFile(
-                "invalid magic header".into(),
-            ));
+            return Err(GitVeilError::InvalidKeyFile("invalid magic header".into()));
         }
 
         let format_version = reader

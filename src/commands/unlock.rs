@@ -6,7 +6,9 @@ use colored::Colorize;
 use crate::error::GitVeilError;
 use crate::git::checkout::force_checkout_files;
 use crate::git::config::configure_filters;
-use crate::git::repo::{find_git_dir, find_repo_root, get_encrypted_files, git_crypt_dir, key_path};
+use crate::git::repo::{
+    find_git_dir, find_repo_root, get_encrypted_files, git_crypt_dir, key_path,
+};
 use crate::gpg::operations::gpg_decrypt_from_file;
 use crate::key::key_file::KeyFile;
 
@@ -61,10 +63,7 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
             .collect();
 
         for key_dir_entry in key_dirs {
-            let key_name = key_dir_entry
-                .file_name()
-                .to_string_lossy()
-                .to_string();
+            let key_name = key_dir_entry.file_name().to_string_lossy().to_string();
 
             // Look for GPG files in the key's version directories
             let key_dir = key_dir_entry.path();
@@ -86,7 +85,11 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
                         }
 
                         if !quiet {
-                            eprintln!("{} key '{}' via GPG.", "Unlocked".green().bold(), key_name.bold());
+                            eprintln!(
+                                "{} key '{}' via GPG.",
+                                "Unlocked".green().bold(),
+                                key_name.bold()
+                            );
                         }
                         unlocked_any = true;
                         break;

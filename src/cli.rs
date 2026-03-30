@@ -100,7 +100,6 @@ pub enum Commands {
     },
 
     // -- Plumbing commands (invoked by git, not the user) --
-
     /// [plumbing] Encrypt stdin (clean filter)
     #[command(hide = true)]
     Clean {
