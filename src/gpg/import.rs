@@ -228,8 +228,5 @@ fn scan_dir_recursive(dir: &Path, keys: &mut Vec<GpgKeyInfo>) -> Result<(), GitV
 
 /// Check if a file has a GPG key file extension.
 fn is_key_file_extension(path: &Path) -> bool {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("asc" | "gpg" | "pub" | "key") => true,
-        _ => false,
-    }
+    matches!(path.extension().and_then(|e| e.to_str()), Some("asc" | "gpg" | "pub" | "key"))
 }
