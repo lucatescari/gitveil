@@ -23,3 +23,9 @@ Thumbs.db
 
 # Personal testing guide
 TESTING.md
+benchmark
+
+# AI Helpers
+.claude
+.claude-flow
+.mcp.json
