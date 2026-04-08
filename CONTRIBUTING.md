@@ -53,7 +53,8 @@ src/
   crypto/       Core cryptography (AES-CTR, HMAC-SHA1, random)
   key/          Key file format (TLV serialization, entries, key container)
   filter/       Git clean/smudge/diff filters
-  commands/     User-facing commands (init, lock, unlock, status, ls/rm-gpg-users, etc.)
+  commands/     User-facing commands (init, lock, unlock, status, export-key,
+                add/rm/ls-gpg-users)
   git/          Git repository helpers (config, checkout, repo inspection)
   gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI)
   cli.rs        clap CLI definitions + shell completion generation
@@ -62,6 +63,10 @@ src/
   main.rs       Entry point
 tests/
   integration.rs  E2E tests using temporary git repos
+benchmark/
+  bench.sh              Status command scaling by file count
+  bench_large_files.sh  Status with large binary files (Unity-like repos)
+  bench_operations.sh   Multi-operation comparison (init, status, lock, unlock)
 scripts/
   release.sh      Automated release + Homebrew formula update
 .github/
