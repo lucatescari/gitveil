@@ -620,3 +620,123 @@ fn test_status_large_blobs_no_deadlock() {
         "should list the large encrypted file"
     );
 }
+
+#[test]
+fn test_unlock_many_files_no_deadlock() {
+    // Regression test: unlock used to deadlock on repos with enough tracked
+    // files to overflow the OS pipe buffer (~64 KB) in get_encrypted_files().
+    // The bug was identical to the status deadlock but in a different code path.
+    let dir = make_test_repo();
+    let key_file = dir.path().join("key");
+
+    assert_success(&gitveil(dir.path(), &["init"]), "init");
+
+    fs::write(
+        dir.path().join(".gitattributes"),
+        "secret-* filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+
+    // Create enough files to overflow the pipe buffer.
+    // Only a few are encrypted; the rest are plain — this exercises the
+    // attribute-checking path that scans ALL tracked files via stdin.
+    for i in 0..20 {
+        fs::write(
+            dir.path().join(format!("secret-{:04}.txt", i)),
+            format!("sensitive-data-{}\n", i),
+        )
+        .unwrap();
+    }
+    for i in 0..2000 {
+        fs::write(
+            dir.path().join(format!("plain-{:04}.txt", i)),
+            format!("public-data-{}\n", i),
+        )
+        .unwrap();
+    }
+
+    assert_success(&git(dir.path(), &["add", "-A"]), "git add");
+    assert_success(
+        &git(dir.path(), &["commit", "-m", "many files"]),
+        "git commit",
+    );
+
+    assert_success(
+        &gitveil(dir.path(), &["export-key", key_file.to_str().unwrap()]),
+        "export-key",
+    );
+    assert_success(&gitveil(dir.path(), &["lock", "--force"]), "lock");
+
+    // Verify files are encrypted
+    let locked = fs::read(dir.path().join("secret-0000.txt")).unwrap();
+    assert!(
+        locked.starts_with(b"\x00GITCRYPT\x00"),
+        "secret should be encrypted after lock"
+    );
+
+    // This would hang forever before the deadlock fix in get_encrypted_files()
+    assert_success(
+        &gitveil(dir.path(), &["unlock", key_file.to_str().unwrap()]),
+        "unlock with many tracked files",
+    );
+
+    // Verify decryption
+    let content = fs::read_to_string(dir.path().join("secret-0000.txt")).unwrap();
+    assert_eq!(content, "sensitive-data-0\n", "should decrypt correctly");
+
+    let content = fs::read_to_string(dir.path().join("secret-0019.txt")).unwrap();
+    assert_eq!(content, "sensitive-data-19\n", "should decrypt last file");
+}
+
+#[test]
+fn test_lock_many_files_no_deadlock() {
+    // Lock also calls get_encrypted_files() — verify it doesn't deadlock either.
+    let dir = make_test_repo();
+    let key_file = dir.path().join("key");
+
+    assert_success(&gitveil(dir.path(), &["init"]), "init");
+
+    fs::write(
+        dir.path().join(".gitattributes"),
+        "secret-* filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+
+    for i in 0..20 {
+        fs::write(
+            dir.path().join(format!("secret-{:04}.txt", i)),
+            format!("sensitive-data-{}\n", i),
+        )
+        .unwrap();
+    }
+    for i in 0..2000 {
+        fs::write(
+            dir.path().join(format!("plain-{:04}.txt", i)),
+            format!("public-data-{}\n", i),
+        )
+        .unwrap();
+    }
+
+    assert_success(&git(dir.path(), &["add", "-A"]), "git add");
+    assert_success(
+        &git(dir.path(), &["commit", "-m", "many files"]),
+        "git commit",
+    );
+
+    assert_success(
+        &gitveil(dir.path(), &["export-key", key_file.to_str().unwrap()]),
+        "export-key",
+    );
+
+    // This would hang forever if lock's get_encrypted_files() deadlocked
+    assert_success(
+        &gitveil(dir.path(), &["lock", "--force"]),
+        "lock with many tracked files",
+    );
+
+    let locked = fs::read(dir.path().join("secret-0000.txt")).unwrap();
+    assert!(
+        locked.starts_with(b"\x00GITCRYPT\x00"),
+        "secret should be encrypted after lock"
+    );
+}
