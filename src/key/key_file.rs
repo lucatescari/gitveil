@@ -319,4 +319,53 @@ mod tests {
         let version = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
         assert_eq!(version, FORMAT_VERSION);
     }
+
+    /// Regression test: load a key file produced by git-crypt.
+    ///
+    /// git-crypt's end-of-section sentinel is a bare u32(0) (4 bytes) with
+    /// no following field_len. An earlier version of read_field always read
+    /// field_id + field_len (8 bytes), consuming bytes from the next section
+    /// and causing "truncated field data" errors.
+    #[test]
+    fn test_load_git_crypt_key_file() {
+        // Minimal git-crypt key: default key, version 0, known AES+HMAC keys.
+        // Built by hand to match the exact binary layout git-crypt produces:
+        //   header (12) | format_version (4)
+        //   header_end sentinel (4)          ← only field_id, no field_len
+        //   KEY_FIELD_VERSION (4+4+4)
+        //   KEY_FIELD_AES_KEY  (4+4+32)
+        //   KEY_FIELD_HMAC_KEY (4+4+64)
+        //   entry_end sentinel (4)           ← only field_id, no field_len
+        let mut buf: Vec<u8> = Vec::new();
+        // Header magic
+        buf.extend_from_slice(b"\x00GITCRYPTKEY");
+        // Format version 2
+        buf.extend_from_slice(&2u32.to_be_bytes());
+        // End of header (4-byte sentinel, NO field_len)
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        // Key entry: version field (id=1, len=4, data=0)
+        buf.extend_from_slice(&1u32.to_be_bytes());
+        buf.extend_from_slice(&4u32.to_be_bytes());
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        // Key entry: AES key (id=3, len=32)
+        buf.extend_from_slice(&3u32.to_be_bytes());
+        buf.extend_from_slice(&32u32.to_be_bytes());
+        let aes_key = [0xAAu8; 32];
+        buf.extend_from_slice(&aes_key);
+        // Key entry: HMAC key (id=5, len=64)
+        buf.extend_from_slice(&5u32.to_be_bytes());
+        buf.extend_from_slice(&64u32.to_be_bytes());
+        let hmac_key = [0xBBu8; 64];
+        buf.extend_from_slice(&hmac_key);
+        // End of entry (4-byte sentinel)
+        buf.extend_from_slice(&0u32.to_be_bytes());
+
+        let mut cursor = Cursor::new(&buf);
+        let kf = KeyFile::load(&mut cursor).expect("should load git-crypt format key");
+        let entry = kf.latest().expect("should have an entry");
+        assert_eq!(entry.version, 0);
+        assert_eq!(entry.aes_key, aes_key);
+        assert_eq!(entry.hmac_key, hmac_key);
+        assert_eq!(kf.key_name(), DEFAULT_KEY_NAME);
+    }
 }
