@@ -8,6 +8,7 @@ Thanks for your interest in contributing to gitveil! This document covers what y
 
 - **Rust** (stable, 1.70+): install via [rustup](https://rustup.rs/)
 - **Git** (2.20+)
+- **git-crypt** (optional, needed for cross-compatibility tests)
 - **GPG** (optional, only needed for GPG-related features)
 
 ### Building
@@ -24,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 46 tests should pass (28 unit + 18 integration). They cover:
+All 52 tests should pass (28 unit + 18 integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
@@ -35,6 +36,10 @@ All 46 tests should pass (28 unit + 18 integration). They cover:
 - Status, export-key, quiet mode, error messages (integration)
 - Edge cases: empty files, binary files, multi-key lock (integration)
 - Pipe deadlock regression: many-file and large-blob status (integration)
+- Cross-tool: key exchange, encrypt/decrypt, named keys, binary files (cross-compatibility)
+
+The cross-compatibility tests (`tests/cross_compat.rs`) verify interoperability with
+git-crypt. They skip automatically when git-crypt is not installed.
 
 ### Running Manually
 
@@ -63,7 +68,8 @@ src/
   error.rs      Error types
   main.rs       Entry point
 tests/
-  integration.rs  E2E tests using temporary git repos
+  integration.rs   E2E tests using temporary git repos
+  cross_compat.rs  Cross-tool tests against git-crypt
 benchmark/
   bench.sh              Status command scaling by file count
   bench_large_files.sh  Status with large binary files (Unity-like repos)
