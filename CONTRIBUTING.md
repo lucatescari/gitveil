@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 52 tests should pass (28 unit + 18 integration + 6 cross-compatibility). They cover:
+All 54 tests should pass (28 unit + 20 integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
@@ -35,7 +35,7 @@ All 52 tests should pass (28 unit + 18 integration + 6 cross-compatibility). The
 - Full E2E: init → encrypt → lock → unlock (integration)
 - Status, export-key, quiet mode, error messages (integration)
 - Edge cases: empty files, binary files, multi-key lock (integration)
-- Pipe deadlock regression: many-file and large-blob status (integration)
+- Pipe deadlock regression: many-file and large-blob status, unlock, lock (integration)
 - Cross-tool: key exchange, encrypt/decrypt, named keys, binary files (cross-compatibility)
 
 The cross-compatibility tests (`tests/cross_compat.rs`) verify interoperability with
