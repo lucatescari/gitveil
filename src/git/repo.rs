@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
 
 use crate::error::GitVeilError;
 
@@ -95,19 +96,28 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
         .spawn()
         .map_err(|e| GitVeilError::Git(format!("failed to run git check-attr: {}", e)))?;
 
-    // With -z, stdin expects NUL-terminated pathnames (not newline-terminated)
-    if let Some(ref mut stdin) = child.stdin {
-        for file in &all_files {
-            write!(stdin, "{}\0", file).map_err(|e| {
-                GitVeilError::Git(format!("failed to write to git check-attr stdin: {}", e))
-            })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| GitVeilError::Git("failed to open check-attr stdin".into()))?;
+
+    // Write paths on a separate thread to avoid pipe deadlock when the
+    // number of files is large enough to overflow the OS pipe buffer.
+    let paths: Vec<String> = all_files.iter().map(|f| f.to_string()).collect();
+    let writer_thread = thread::spawn(move || {
+        let mut stdin = stdin;
+        for file in &paths {
+            if write!(stdin, "{}\0", file).is_err() {
+                break;
+            }
         }
-    }
-    drop(child.stdin.take());
+    });
 
     let output = child
         .wait_with_output()
         .map_err(|e| GitVeilError::Git(format!("failed to wait for git check-attr: {}", e)))?;
+
+    let _ = writer_thread.join();
 
     if !output.status.success() {
         return Err(GitVeilError::Git("git check-attr -z --stdin failed".into()));
