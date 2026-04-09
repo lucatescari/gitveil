@@ -344,4 +344,4 @@ benchmark/               # Performance benchmarks (gitveil vs git-crypt)
 
 ## License
 
-GPL-3.0
+[GPL-3.0-only](LICENSE)
