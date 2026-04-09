@@ -34,17 +34,18 @@ Gitveil is **byte-compatible** with git-crypt. Repositories encrypted with git-c
 
 ## Installation
 
+### Homebrew (macOS)
+
+```bash
+brew install lucatescari/gitveil/gitveil
+```
+
 ### From source
 
 ```bash
-git clone <this-repo>
-cd git-crypt-rust
+git clone https://github.com/lucatescari/gitveil.git
+cd gitveil
 cargo build --release
-```
-
-The binary will be at `target/release/gitveil`. Copy it somewhere in your `$PATH`:
-
-```bash
 cp target/release/gitveil /usr/local/bin/
 ```
 
@@ -252,6 +253,8 @@ gitveil status [-e] [-u] [-f]
 | `-u` | Show only unencrypted files |
 | `-f, --fix` | Re-encrypt files that should be encrypted but aren't |
 
+The status command uses batched subprocesses (3 total, regardless of repo size) instead of spawning one per file. On a Unity project with ~4,000 files it completes in ~130 ms vs ~65 seconds for git-crypt -- roughly 500x faster.
+
 ## Named Keys
 
 Gitveil supports multiple named keys, allowing you to share different files with different groups of people:
@@ -312,13 +315,22 @@ src/
     smudge.rs           # Decrypt on git checkout
     diff.rs             # Decrypt for git diff
   commands/
-    init.rs, lock.rs, unlock.rs, add_gpg_user.rs, export_key.rs, status.rs
+    init.rs             # Initialize repository encryption
+    lock.rs             # Secure repository, remove keys
+    unlock.rs           # Decrypt repository
+    status.rs           # Show encryption status
+    export_key.rs       # Export symmetric key
+    add_gpg_user.rs     # Add GPG collaborator
+    rm_gpg_user.rs      # Remove GPG collaborator
+    ls_gpg_users.rs     # List GPG collaborators
   git/
     repo.rs             # Repository inspection
     config.rs           # Git filter configuration
     checkout.rs         # Force checkout for lock/unlock
   gpg/
     operations.rs       # GPG encrypt/decrypt via subprocess
+    import.rs           # Import GPG keys from files/URLs
+benchmark/               # Performance benchmarks (gitveil vs git-crypt)
 ```
 
 ## License

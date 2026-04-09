@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
+use std::thread;
 
 use colored::Colorize;
 
@@ -94,19 +95,28 @@ fn get_git_crypt_files(files: &[&str]) -> Result<Vec<String>, GitVeilError> {
         .spawn()
         .map_err(|e| GitVeilError::Git(format!("failed to run git check-attr: {}", e)))?;
 
-    // With -z, stdin expects NUL-terminated pathnames (not newline-terminated)
-    if let Some(ref mut stdin) = child.stdin {
-        for file in files {
-            write!(stdin, "{}\0", file).map_err(|e| {
-                GitVeilError::Git(format!("failed to write to git check-attr stdin: {}", e))
-            })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| GitVeilError::Git("failed to open check-attr stdin".into()))?;
+
+    // Write paths on a separate thread to avoid pipe deadlock when the
+    // number of files is large enough to overflow the OS pipe buffer.
+    let paths: Vec<String> = files.iter().map(|f| f.to_string()).collect();
+    let writer_thread = thread::spawn(move || {
+        let mut stdin = stdin;
+        for file in &paths {
+            if write!(stdin, "{}\0", file).is_err() {
+                break;
+            }
         }
-    }
-    drop(child.stdin.take());
+    });
 
     let output = child
         .wait_with_output()
         .map_err(|e| GitVeilError::Git(format!("failed to wait for git check-attr: {}", e)))?;
+
+    let _ = writer_thread.join();
 
     if !output.status.success() {
         return Err(GitVeilError::Git("git check-attr -z --stdin failed".into()));
@@ -151,22 +161,30 @@ fn batch_check_blobs_encrypted(files: &[String]) -> Result<Vec<bool>, GitVeilErr
         .spawn()
         .map_err(|e| GitVeilError::Git(format!("failed to run git cat-file --batch: {}", e)))?;
 
-    let mut stdin = child
+    let stdin = child
         .stdin
         .take()
         .ok_or_else(|| GitVeilError::Git("failed to open cat-file stdin".into()))?;
-
-    // Write all queries upfront, then close stdin so cat-file can flush
-    for file in files {
-        writeln!(stdin, ":{}", file)
-            .map_err(|e| GitVeilError::Git(format!("failed to write to cat-file stdin: {}", e)))?;
-    }
-    drop(stdin);
 
     let stdout = child
         .stdout
         .take()
         .ok_or_else(|| GitVeilError::Git("failed to open cat-file stdout".into()))?;
+
+    // Write queries on a separate thread to avoid pipe deadlock.
+    // If we wrote all queries before reading, the stdout pipe could fill up
+    // (e.g. large blobs), blocking cat-file, which in turn blocks our writes.
+    let queries: Vec<String> = files.iter().map(|f| format!(":{}", f)).collect();
+    let writer_thread = thread::spawn(move || {
+        let mut stdin = stdin;
+        for query in &queries {
+            if writeln!(stdin, "{}", query).is_err() {
+                break;
+            }
+        }
+        // stdin is dropped here, signaling EOF to cat-file
+    });
+
     let mut reader = BufReader::new(stdout);
     let mut results = Vec::with_capacity(files.len());
 
@@ -215,6 +233,9 @@ fn batch_check_blobs_encrypted(files: &[String]) -> Result<Vec<bool>, GitVeilErr
 
         results.push(is_encrypted);
     }
+
+    // Wait for the writer thread to finish
+    let _ = writer_thread.join();
 
     // Wait for cat-file to exit
     let _ = child.wait();
