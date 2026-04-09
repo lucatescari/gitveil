@@ -527,3 +527,96 @@ fn test_lock_all_keys() {
         "b.back should be encrypted"
     );
 }
+
+#[test]
+fn test_status_many_files_no_deadlock() {
+    // Regression test: the status command used to deadlock on repos with
+    // enough encrypted files to overflow the OS pipe buffer (~64 KB).
+    // This creates 200 encrypted files to exercise the concurrent I/O path.
+    let dir = make_test_repo();
+
+    assert_success(&gitveil(dir.path(), &["init"]), "init");
+
+    fs::write(
+        dir.path().join(".gitattributes"),
+        "secret-* filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+
+    for i in 0..200 {
+        fs::write(
+            dir.path().join(format!("secret-{:04}.txt", i)),
+            format!("sensitive-data-{}\n", i),
+        )
+        .unwrap();
+    }
+
+    // Also add plain files so status has to filter
+    for i in 0..200 {
+        fs::write(
+            dir.path().join(format!("plain-{:04}.txt", i)),
+            format!("public-data-{}\n", i),
+        )
+        .unwrap();
+    }
+
+    assert_success(&git(dir.path(), &["add", "-A"]), "git add");
+    assert_success(
+        &git(dir.path(), &["commit", "-m", "many files"]),
+        "git commit",
+    );
+
+    // This would hang forever before the deadlock fix
+    let out = gitveil(dir.path(), &["status"]);
+    assert_success(&out, "status with many files");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // All 200 secret files should appear
+    assert!(
+        stdout.contains("secret-0000.txt"),
+        "should list first encrypted file"
+    );
+    assert!(
+        stdout.contains("secret-0199.txt"),
+        "should list last encrypted file"
+    );
+    // Plain files should not appear (they don't have the filter)
+    assert!(
+        !stdout.contains("plain-0000.txt"),
+        "should not list plain files"
+    );
+}
+
+#[test]
+fn test_status_large_blobs_no_deadlock() {
+    // Regression test: even a single large blob can fill the stdout pipe
+    // buffer and deadlock if stdin/stdout aren't handled concurrently.
+    let dir = make_test_repo();
+
+    assert_success(&gitveil(dir.path(), &["init"]), "init");
+
+    fs::write(
+        dir.path().join(".gitattributes"),
+        "*.bin filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+
+    // Create a 256 KB file — well above the 64 KB pipe buffer
+    let large_data: Vec<u8> = (0..256 * 1024).map(|i| (i % 256) as u8).collect();
+    fs::write(dir.path().join("asset.bin"), &large_data).unwrap();
+
+    assert_success(&git(dir.path(), &["add", "-A"]), "git add");
+    assert_success(
+        &git(dir.path(), &["commit", "-m", "large blob"]),
+        "git commit",
+    );
+
+    let out = gitveil(dir.path(), &["status"]);
+    assert_success(&out, "status with large blob");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("asset.bin"),
+        "should list the large encrypted file"
+    );
+}
