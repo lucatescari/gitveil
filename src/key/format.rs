@@ -21,6 +21,12 @@ pub fn read_field(reader: &mut dyn Read) -> Result<Option<TlvField>, GitVeilErro
         Err(e) => return Err(GitVeilError::Io(e)),
     };
 
+    // End-of-section sentinel: git-crypt writes only field_id=0 with no
+    // following field_len. Return immediately to stay compatible.
+    if field_id == 0 {
+        return Ok(Some((0, Zeroizing::new(Vec::new()))));
+    }
+
     let field_len = reader
         .read_u32::<BigEndian>()
         .map_err(|_| GitVeilError::InvalidKeyFile("truncated field length".into()))?
@@ -55,9 +61,9 @@ pub fn write_field(writer: &mut dyn Write, field_id: u32, data: &[u8]) -> Result
     Ok(())
 }
 
-/// Write an end field (field_id=0, field_len=0).
+/// Write an end-of-section sentinel (field_id=0 only).
+/// git-crypt writes just the 4-byte field_id with no field_len.
 pub fn write_end_field(writer: &mut dyn Write) -> Result<(), GitVeilError> {
-    writer.write_u32::<BigEndian>(0)?;
     writer.write_u32::<BigEndian>(0)?;
     Ok(())
 }
