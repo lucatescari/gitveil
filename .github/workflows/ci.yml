@@ -34,6 +34,14 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install git-crypt (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y git-crypt
+
+      - name: Install git-crypt (macOS)
+        if: runner.os == 'macOS'
+        run: brew install git-crypt
+
       - name: Check formatting
         run: cargo fmt --check
 
@@ -45,3 +53,6 @@ jobs:
 
       - name: Integration tests
         run: cargo test --test integration
+
+      - name: Cross-compatibility tests
+        run: cargo test --test cross_compat
