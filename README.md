@@ -1,6 +1,15 @@
-# Gitveil
+<p align="center">
+  <img src="gitveil.svg" alt="Gitveil logo" width="200">
+</p>
 
-[![CI](https://github.com/lucatescari/gitveil/actions/workflows/ci.yml/badge.svg)](https://github.com/lucatescari/gitveil/actions/workflows/ci.yml)
+<h1 align="center">Gitveil</h1>
+
+<p align="center">
+  <a href="https://github.com/lucatescari/gitveil/actions/workflows/ci.yml"><img src="https://github.com/lucatescari/gitveil/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/lucatescari/gitveil/releases/latest"><img src="https://img.shields.io/github/v/release/lucatescari/gitveil" alt="Release"></a>
+  <a href="https://github.com/lucatescari/gitveil/blob/dev/LICENSE"><img src="https://img.shields.io/github/license/lucatescari/gitveil" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-blue" alt="Platform">
+</p>
 
 **Transparent file encryption in git** -- a Rust implementation compatible with [git-crypt](https://github.com/AGWA/git-crypt).
 
