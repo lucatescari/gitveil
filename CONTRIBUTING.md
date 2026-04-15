@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 74 tests should pass (28 unit + 40 integration + 6 cross-compatibility). They cover:
+All 77 tests should pass (31 unit + 40 integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
@@ -36,6 +36,10 @@ All 74 tests should pass (28 unit + 40 integration + 6 cross-compatibility). The
 - Status, export-key, quiet mode, error messages (integration)
 - Edge cases: empty files, binary files, multi-key lock (integration)
 - Pipe deadlock regression: many-file and large-blob status, unlock, lock (integration)
+- Global config: XDG resolution, keyring path save/load/remove, permissions (unit)
+- Config CLI: set-keyring, unset-keyring, show, overwrite, canonicalization, symlinks (integration)
+- Keyring fallback: add-gpg-user with no args, empty dir, deleted dir, precedence (integration)
+- Scan security: symlink skipping, non-key extensions, empty directory (integration)
 - Cross-tool: key exchange, encrypt/decrypt, named keys, binary files (cross-compatibility)
 
 The cross-compatibility tests (`tests/cross_compat.rs`) verify interoperability with
