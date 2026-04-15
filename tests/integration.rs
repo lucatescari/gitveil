@@ -1230,6 +1230,8 @@ fn test_add_gpg_user_from_still_takes_precedence() {
     );
 }
 
+// This test invokes GPG which is not installed on Windows CI and can hang.
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn test_add_gpg_user_userid_still_takes_precedence() {
     let dir = make_test_repo();
