@@ -3,6 +3,7 @@ use std::process::Command;
 
 use colored::Colorize;
 
+use crate::config;
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::repo::{find_git_dir, find_repo_root, git_crypt_dir, key_path};
@@ -47,9 +48,33 @@ pub fn add_gpg_user(
             }
         }
         None => {
+            // Try global keyring if no --from and no gpg_user_id
+            if gpg_user_id.is_none() {
+                match config::load_keyring_path() {
+                    Ok(Some(keyring_path)) => {
+                        return add_from_path(
+                            key_name,
+                            no_commit,
+                            trusted,
+                            &keyring_path,
+                            &git_dir,
+                        );
+                    }
+                    Ok(None) => {} // No keyring configured, fall through to error
+                    Err(e) => {
+                        eprintln!(
+                            "{} global keyring: {}",
+                            "Warning:".yellow().bold(),
+                            e
+                        );
+                        // Fall through to error
+                    }
+                }
+            }
+
             let gpg_user_id = gpg_user_id.ok_or_else(|| {
                 GitVeilError::Other(
-                    "GPG user ID is required (or use --from to import from a file/directory/URL)"
+                    "GPG user ID is required (or use --from to import from a file/directory/URL, or configure a global keyring with 'gitveil config set-keyring <path>')"
                         .into(),
                 )
             })?;
