@@ -46,9 +46,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Install GnuPG via winget (fast, native Windows build)
-          winget install --id GnuPG.GnuPG -e --accept-source-agreements --accept-package-agreements --silent
-          # Add to PATH for subsequent steps
+          $url = "https://gnupg.org/ftp/gcrypt/binary/gnupg-w32-2.4.7_20250114.exe"
+          $installer = "$env:RUNNER_TEMP\gnupg-installer.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+          Start-Process -FilePath $installer -ArgumentList "/S" -Wait -NoNewWindow
           echo "C:\Program Files (x86)\GnuPG\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Check formatting
