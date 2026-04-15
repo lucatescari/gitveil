@@ -1,6 +1,6 @@
 [package]
 name = "gitveil"
-version = "1.1.2"
+version = "1.2.0"
 edition = "2021"
 description = "Transparent file encryption in git (git-crypt compatible)"
 license = "GPL-3.0-only"
