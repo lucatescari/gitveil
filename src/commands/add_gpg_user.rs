@@ -62,11 +62,7 @@ pub fn add_gpg_user(
                     }
                     Ok(None) => {} // No keyring configured, fall through to error
                     Err(e) => {
-                        eprintln!(
-                            "{} global keyring: {}",
-                            "Warning:".yellow().bold(),
-                            e
-                        );
+                        eprintln!("{} global keyring: {}", "Warning:".yellow().bold(), e);
                         // Fall through to error
                     }
                 }

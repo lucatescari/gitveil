@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 54 tests should pass (28 unit + 20 integration + 6 cross-compatibility). They cover:
+All 74 tests should pass (28 unit + 40 integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
