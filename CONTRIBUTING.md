@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 77 tests should pass (31 unit + 40 integration + 6 cross-compatibility). They cover:
+All 91 tests should pass (31 unit + 40 integration + 14 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
@@ -40,6 +40,11 @@ All 77 tests should pass (31 unit + 40 integration + 6 cross-compatibility). The
 - Config CLI: set-keyring, unset-keyring, show, overwrite, canonicalization, symlinks (integration)
 - Keyring fallback: add-gpg-user with no args, empty dir, deleted dir, precedence (integration)
 - Scan security: symlink skipping, non-key extensions, empty directory (integration)
+- GPG add-gpg-user: by email, fingerprint, --trusted, --no-commit, -k, --from file (GPG integration)
+- GPG rm-gpg-user: remove, --no-commit, user not found (GPG integration)
+- GPG ls-gpg-users: list, no users, named key (GPG integration)
+- GPG unlock roundtrip: add user, lock, unlock via GPG (GPG integration)
+- GPG multi-user: add 2 users, remove 1, verify count (GPG integration)
 - Cross-tool: key exchange, encrypt/decrypt, named keys, binary files (cross-compatibility)
 
 The cross-compatibility tests (`tests/cross_compat.rs`) verify interoperability with
@@ -73,8 +78,9 @@ src/
   error.rs      Error types
   main.rs       Entry point
 tests/
-  integration.rs   E2E tests using temporary git repos
-  cross_compat.rs  Cross-tool tests against git-crypt
+  integration.rs      E2E tests using temporary git repos
+  gpg_integration.rs  GPG user management tests (add/rm/ls, unlock via GPG)
+  cross_compat.rs     Cross-tool tests against git-crypt
 benchmark/
   bench.sh              Status command scaling by file count
   bench_large_files.sh  Status with large binary files (Unity-like repos)
