@@ -85,7 +85,10 @@ pub fn load_keyring_path() -> Result<Option<PathBuf>, GitVeilError> {
         )));
     }
 
-    Ok(Some(path))
+    // Re-canonicalize for defense-in-depth (config file could be hand-edited)
+    let canonical = fs::canonicalize(&path).unwrap_or(path);
+
+    Ok(Some(canonical))
 }
 
 /// Save a keyring path to the config file.
@@ -120,7 +123,7 @@ pub fn save_keyring_path(path: &Path) -> Result<(), GitVeilError> {
     create_config_dir(&dir)?;
 
     let cf = dir.join("config");
-    write_config_file(&cf, canonical.to_string_lossy().as_ref())?;
+    write_config_file(&cf, &format!("{}\n", canonical.to_string_lossy()))?;
 
     Ok(())
 }
@@ -179,20 +182,47 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    // SAFETY: These tests mutate the process environment (XDG_CONFIG_HOME).
+    // They must be run with --test-threads=1 to avoid races:
+    //   cargo test --bin gitveil config::tests -- --test-threads=1
+
+    /// Helper to set XDG_CONFIG_HOME for a test scope, restoring it on drop.
+    struct XdgGuard {
+        old: Option<String>,
+    }
+
+    impl XdgGuard {
+        fn set(path: &Path) -> Self {
+            let old = std::env::var("XDG_CONFIG_HOME").ok();
+            // SAFETY: tests run single-threaded via --test-threads=1
+            unsafe { std::env::set_var("XDG_CONFIG_HOME", path) };
+            Self { old }
+        }
+    }
+
+    impl Drop for XdgGuard {
+        fn drop(&mut self) {
+            // SAFETY: tests run single-threaded via --test-threads=1
+            match &self.old {
+                Some(v) => unsafe { std::env::set_var("XDG_CONFIG_HOME", v) },
+                None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+            }
+        }
+    }
+
     #[test]
     fn test_config_dir_uses_xdg() {
         let tmp = TempDir::new().unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+        let _guard = XdgGuard::set(tmp.path());
         let dir = config_dir().unwrap();
         assert_eq!(dir, tmp.path().join("gitveil"));
-        std::env::remove_var("XDG_CONFIG_HOME");
     }
 
     #[test]
     fn test_save_load_roundtrip() {
         let tmp_config = TempDir::new().unwrap();
         let tmp_keyring = TempDir::new().unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", tmp_config.path());
+        let _guard = XdgGuard::set(tmp_config.path());
 
         save_keyring_path(tmp_keyring.path()).unwrap();
         let loaded = load_keyring_path().unwrap();
@@ -201,16 +231,13 @@ mod tests {
         // Canonicalize both for comparison (macOS /private/var vs /var)
         let expected = fs::canonicalize(tmp_keyring.path()).unwrap();
         assert_eq!(loaded_path, expected);
-
-        std::env::remove_var("XDG_CONFIG_HOME");
     }
 
     #[test]
     fn test_load_missing_config_returns_none() {
         let tmp = TempDir::new().unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+        let _guard = XdgGuard::set(tmp.path());
         let loaded = load_keyring_path().unwrap();
         assert!(loaded.is_none());
-        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }
