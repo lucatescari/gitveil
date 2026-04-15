@@ -1,4 +1,5 @@
 pub mod add_gpg_user;
+pub mod config;
 pub mod export_key;
 pub mod init;
 pub mod lock;

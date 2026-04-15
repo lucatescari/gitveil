@@ -124,6 +124,12 @@ pub enum Commands {
         key_name: Option<String>,
     },
 
+    /// Manage global gitveil configuration
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
     /// Generate shell completions for bash, zsh, or fish
     Completions {
         /// Shell to generate completions for
@@ -159,6 +165,24 @@ pub enum Commands {
         #[arg()]
         file: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigAction {
+    /// Set the global GPG keyring directory
+    #[command(name = "set-keyring")]
+    SetKeyring {
+        /// Path to a directory containing GPG public key files
+        #[arg()]
+        path: PathBuf,
+    },
+
+    /// Remove the global keyring directory setting
+    #[command(name = "unset-keyring")]
+    UnsetKeyring,
+
+    /// Show current configuration
+    Show,
 }
 
 /// Generate shell completions and write to stdout.
