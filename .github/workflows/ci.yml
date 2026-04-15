@@ -42,6 +42,10 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install git-crypt gnupg
 
+      - name: Install GPG (Windows)
+        if: runner.os == 'Windows'
+        run: choco install gnupg -y --no-progress
+
       - name: Check formatting
         run: cargo fmt --check
 

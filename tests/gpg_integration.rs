@@ -14,8 +14,8 @@ use std::process::{Command, Output};
 
 /// Check whether gpg is available and fully functional on this system.
 /// This tests more than just `gpg --version` — it verifies GPG can actually
-/// operate with a custom GNUPGHOME (temp directory). On Windows CI, the
-/// Git-bundled GPG may report a version but fail on real operations due to
+/// operate with a custom GNUPGHOME (temp directory). On Windows CI without
+/// standalone GPG, the Git-bundled GPG fails on real operations due to
 /// MSYS2 path translation issues.
 fn gpg_available() -> bool {
     // First check: binary exists
@@ -30,23 +30,19 @@ fn gpg_available() -> bool {
     }
 
     // Second check: GPG can actually work with a temp GNUPGHOME.
-    // This catches Windows CI where path handling breaks.
+    // Run --list-keys which creates the keyring files if GNUPGHOME works.
     let tmp = match tempfile::tempdir() {
         Ok(d) => d,
         Err(_) => return false,
     };
-    Command::new("gpg")
+    let _ = Command::new("gpg")
         .args(["--batch", "--list-keys"])
         .env("GNUPGHOME", tmp.path())
-        .output()
-        .map(|o| {
-            // gpg --list-keys with empty keyring returns 0 on most platforms
-            // (it creates the keyring). If it fails, GNUPGHOME is broken.
-            // Also check that it didn't error with path issues.
-            o.status.success()
-                || !String::from_utf8_lossy(&o.stderr).contains("No such file or directory")
-        })
-        .unwrap_or(false)
+        .output();
+
+    // Proof that GPG handled the path: it created a keyring file.
+    tmp.path().join("trustdb.gpg").exists()
+        || tmp.path().join("pubring.kbx").exists()
 }
 
 /// Early-return from a test when gpg is not functional.
