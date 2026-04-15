@@ -41,8 +41,7 @@ fn gpg_available() -> bool {
         .output();
 
     // Proof that GPG handled the path: it created a keyring file.
-    tmp.path().join("trustdb.gpg").exists()
-        || tmp.path().join("pubring.kbx").exists()
+    tmp.path().join("trustdb.gpg").exists() || tmp.path().join("pubring.kbx").exists()
 }
 
 /// Early-return from a test when gpg is not functional.
