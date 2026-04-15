@@ -64,10 +64,11 @@ src/
   key/          Key file format (TLV serialization, entries, key container)
   filter/       Git clean/smudge/diff filters
   commands/     User-facing commands (init, lock, unlock, status, export-key,
-                add/rm/ls-gpg-users)
+                add/rm/ls-gpg-users, config)
   git/          Git repository helpers (config, checkout, repo inspection)
   gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI)
   cli.rs        clap CLI definitions + shell completion generation
+  config.rs     Global configuration (XDG keyring path)
   constants.rs  Shared constants (magic bytes, sizes, field IDs)
   error.rs      Error types
   main.rs       Entry point
