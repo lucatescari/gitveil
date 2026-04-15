@@ -46,7 +46,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $url = "https://gnupg.org/ftp/gcrypt/binary/gnupg-w32-2.4.7_20250114.exe"
+          $url = "https://gnupg.org/ftp/gcrypt/binary/gnupg-w32-2.4.8_20250514.exe"
           $installer = "$env:RUNNER_TEMP\gnupg-installer.exe"
           Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
           Start-Process -FilePath $installer -ArgumentList "/S" -Wait -NoNewWindow
