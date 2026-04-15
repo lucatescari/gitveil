@@ -44,7 +44,12 @@ jobs:
 
       - name: Install GPG (Windows)
         if: runner.os == 'Windows'
-        run: choco install gnupg -y --no-progress
+        shell: pwsh
+        run: |
+          # Install GnuPG via winget (fast, native Windows build)
+          winget install --id GnuPG.GnuPG -e --accept-source-agreements --accept-package-agreements --silent
+          # Add to PATH for subsequent steps
+          echo "C:\Program Files (x86)\GnuPG\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Check formatting
         run: cargo fmt --check
