@@ -203,6 +203,7 @@ pub fn pick_keys(keys: &[GpgKeyInfo]) -> Result<Vec<usize>, GitVeilError> {
 }
 
 /// Recursively scan a directory for GPG key files.
+/// Symlinks are skipped to prevent symlink-based attacks (see CLAUDE.md security policy).
 fn scan_dir_recursive(dir: &Path, keys: &mut Vec<GpgKeyInfo>) -> Result<(), GitVeilError> {
     let entries = std::fs::read_dir(dir)?;
 
@@ -211,6 +212,12 @@ fn scan_dir_recursive(dir: &Path, keys: &mut Vec<GpgKeyInfo>) -> Result<(), GitV
             Ok(ft) => ft,
             Err(_) => continue,
         };
+
+        // Skip symlinks (security: prevent following malicious symlinks)
+        if ft.is_symlink() {
+            continue;
+        }
+
         let path = entry.path();
 
         if ft.is_dir() {
