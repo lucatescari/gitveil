@@ -12,20 +12,48 @@ use std::process::{Command, Output};
 
 // ─── Helpers ───────────────────────────────────────────────────
 
-/// Check whether gpg is available and functional on this system.
+/// Check whether gpg is available and fully functional on this system.
+/// This tests more than just `gpg --version` — it verifies GPG can actually
+/// operate with a custom GNUPGHOME (temp directory). On Windows CI, the
+/// Git-bundled GPG may report a version but fail on real operations due to
+/// MSYS2 path translation issues.
 fn gpg_available() -> bool {
-    Command::new("gpg")
+    // First check: binary exists
+    let version_ok = Command::new("gpg")
         .args(["--version"])
         .output()
         .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !version_ok {
+        return false;
+    }
+
+    // Second check: GPG can actually work with a temp GNUPGHOME.
+    // This catches Windows CI where path handling breaks.
+    let tmp = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    Command::new("gpg")
+        .args(["--batch", "--list-keys"])
+        .env("GNUPGHOME", tmp.path())
+        .output()
+        .map(|o| {
+            // gpg --list-keys with empty keyring returns 0 on most platforms
+            // (it creates the keyring). If it fails, GNUPGHOME is broken.
+            // Also check that it didn't error with path issues.
+            o.status.success()
+                || !String::from_utf8_lossy(&o.stderr).contains("No such file or directory")
+        })
         .unwrap_or(false)
 }
 
-/// Early-return from a test when gpg is not installed.
+/// Early-return from a test when gpg is not functional.
 macro_rules! skip_without_gpg {
     () => {
         if !gpg_available() {
-            eprintln!("SKIPPED: gpg not found in PATH");
+            eprintln!("SKIPPED: gpg not functional (not installed or GNUPGHOME broken)");
             return;
         }
     };
