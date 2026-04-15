@@ -180,13 +180,14 @@ fn write_config_file(path: &Path, content: &str) -> Result<(), GitVeilError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use tempfile::TempDir;
 
-    // SAFETY: These tests mutate the process environment (XDG_CONFIG_HOME).
-    // They must be run with --test-threads=1 to avoid races:
-    //   cargo test --bin gitveil config::tests -- --test-threads=1
+    // Mutex serializes all tests that mutate XDG_CONFIG_HOME.
+    // Without this, parallel test threads race on the shared env var.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    /// Helper to set XDG_CONFIG_HOME for a test scope, restoring it on drop.
+    /// Set XDG_CONFIG_HOME for a test scope, restoring it on drop.
     struct XdgGuard {
         old: Option<String>,
     }
@@ -194,7 +195,8 @@ mod tests {
     impl XdgGuard {
         fn set(path: &Path) -> Self {
             let old = std::env::var("XDG_CONFIG_HOME").ok();
-            // SAFETY: tests run single-threaded via --test-threads=1
+            // SAFETY: caller holds ENV_LOCK so no other test thread is
+            // reading or writing this env var concurrently.
             unsafe { std::env::set_var("XDG_CONFIG_HOME", path) };
             Self { old }
         }
@@ -202,7 +204,7 @@ mod tests {
 
     impl Drop for XdgGuard {
         fn drop(&mut self) {
-            // SAFETY: tests run single-threaded via --test-threads=1
+            // SAFETY: caller still holds ENV_LOCK (guard dropped before lock)
             match &self.old {
                 Some(v) => unsafe { std::env::set_var("XDG_CONFIG_HOME", v) },
                 None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
@@ -212,6 +214,7 @@ mod tests {
 
     #[test]
     fn test_config_dir_uses_xdg() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let _guard = XdgGuard::set(tmp.path());
         let dir = config_dir().unwrap();
@@ -220,6 +223,7 @@ mod tests {
 
     #[test]
     fn test_save_load_roundtrip() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let tmp_config = TempDir::new().unwrap();
         let tmp_keyring = TempDir::new().unwrap();
         let _guard = XdgGuard::set(tmp_config.path());
@@ -235,6 +239,7 @@ mod tests {
 
     #[test]
     fn test_load_missing_config_returns_none() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let _guard = XdgGuard::set(tmp.path());
         let loaded = load_keyring_path().unwrap();
