@@ -186,6 +186,8 @@ gitveil add-gpg-user [-k <key-name>] [-n] [--trusted] [--from <source>] [<GPG_US
 | `--trusted` | Skip GPG Web of Trust verification |
 | `--from <source>` | Import GPG key(s) from a file, directory, or git URL |
 
+When called with no arguments and no `--from`, gitveil checks for a globally configured keyring directory (see `gitveil config set-keyring`). If configured, it scans the directory and shows an interactive picker.
+
 #### Import keys from a shared keyring
 
 If your team stores GPG public keys in a shared repository, you can import them directly:
@@ -202,6 +204,37 @@ gitveil add-gpg-user --from git@github.com:company/gpg-keys.git
 ```
 
 When pointing at a directory (or git URL), gitveil scans for `.asc`, `.gpg`, `.pub`, and `.key` files, shows a list of found keys (name, email, fingerprint), and lets you select one or more to add as collaborators.
+
+### `gitveil config`
+
+Manage global gitveil configuration.
+
+```bash
+# Set a global GPG keyring directory
+gitveil config set-keyring /path/to/team-keys
+
+# Show current configuration
+gitveil config show
+
+# Remove the keyring setting
+gitveil config unset-keyring
+```
+
+When a keyring directory is configured, `gitveil add-gpg-user` (with no arguments and no `--from`) will automatically scan the keyring directory and present an interactive picker to select GPG keys. This is useful when your team stores GPG public keys in a shared folder or git repository.
+
+The keyring directory has no special format -- it's just a folder containing GPG public key files (exported with `gpg --export` or `gpg --armor --export`). Files are matched by extension (`.asc`, `.gpg`, `.pub`, `.key`) and can be organized in subdirectories. Non-key files and symlinks are ignored.
+
+```
+team-keys/
+├── engineering/
+│   ├── alice.asc
+│   └── bob.pub
+├── design/
+│   └── carol.gpg
+└── README.md           # ignored (not a key extension)
+```
+
+The keyring path is stored in `~/.config/gitveil/config` (respects `$XDG_CONFIG_HOME`). The config file is created with 0600 permissions and the config directory with 0700 permissions.
 
 ### `gitveil rm-gpg-user`
 
@@ -309,6 +342,7 @@ The clean filter must read the entire file into memory to compute the HMAC-SHA1 
 src/
   main.rs              # Entry point + CLI dispatch
   cli.rs               # clap CLI definitions
+  config.rs            # Global configuration (XDG keyring path)
   constants.rs         # Magic bytes, sizes, field IDs
   error.rs             # Error types
   crypto/
@@ -330,6 +364,7 @@ src/
     status.rs           # Show encryption status
     export_key.rs       # Export symmetric key
     add_gpg_user.rs     # Add GPG collaborator
+    config.rs           # Global config management
     rm_gpg_user.rs      # Remove GPG collaborator
     ls_gpg_users.rs     # List GPG collaborators
   git/

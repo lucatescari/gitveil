@@ -740,3 +740,654 @@ fn test_lock_many_files_no_deadlock() {
         "secret should be encrypted after lock"
     );
 }
+
+// ─── Config Tests ──────────────────────────────────────────────
+
+/// Run gitveil with a custom XDG_CONFIG_HOME for isolated config testing.
+fn gitveil_with_config_home(config_home: &Path, dir: &Path, args: &[&str]) -> Output {
+    Command::new(gitveil_bin())
+        .args(args)
+        .current_dir(dir)
+        .env("XDG_CONFIG_HOME", config_home)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run gitveil {:?}: {}", args, e))
+}
+
+#[test]
+fn test_config_set_keyring_valid_directory() {
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring_dir = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &[
+            "config",
+            "set-keyring",
+            &keyring_dir.path().to_string_lossy(),
+        ],
+    );
+    assert_success(&out, "config set-keyring");
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Set"),
+        "should confirm keyring was set: {}",
+        stderr
+    );
+
+    // Config file should exist
+    let config_file = config_home.path().join("gitveil").join("config");
+    assert!(config_file.exists(), "config file should be created");
+}
+
+#[test]
+fn test_config_set_keyring_nonexistent_path_fails() {
+    let config_home = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &[
+            "config",
+            "set-keyring",
+            "/nonexistent/path/that/does/not/exist",
+        ],
+    );
+    assert!(!out.status.success(), "should fail for nonexistent path");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("does not exist"),
+        "should mention path doesn't exist: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_config_set_keyring_file_not_dir_fails() {
+    let config_home = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    let file = work_dir.path().join("not-a-dir.txt");
+    fs::write(&file, "hello").unwrap();
+
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &["config", "set-keyring", &file.to_string_lossy()],
+    );
+    assert!(!out.status.success(), "should fail when path is a file");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not a directory"),
+        "should say not a directory: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_config_set_keyring_show_roundtrip() {
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring_dir = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    // Set
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &[
+            "config",
+            "set-keyring",
+            &keyring_dir.path().to_string_lossy(),
+        ],
+    );
+    assert_success(&out, "config set-keyring");
+
+    // Show
+    let out = gitveil_with_config_home(config_home.path(), work_dir.path(), &["config", "show"]);
+    assert_success(&out, "config show");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The stored path is canonicalized, so compare canonical forms
+    let expected = fs::canonicalize(keyring_dir.path()).unwrap();
+    assert!(
+        stdout.contains(&expected.to_string_lossy().to_string()),
+        "show should display keyring path.\nExpected to contain: {}\nGot: {}",
+        expected.display(),
+        stdout
+    );
+}
+
+#[test]
+fn test_config_unset_keyring() {
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring_dir = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    // Set
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &[
+            "config",
+            "set-keyring",
+            &keyring_dir.path().to_string_lossy(),
+        ],
+    );
+    assert_success(&out, "config set-keyring");
+
+    // Unset
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &["config", "unset-keyring"],
+    );
+    assert_success(&out, "config unset-keyring");
+
+    // Show should report not set
+    let out = gitveil_with_config_home(config_home.path(), work_dir.path(), &["config", "show"]);
+    assert_success(&out, "config show after unset");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("not set"),
+        "should say not set after unset: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_config_show_no_config() {
+    let config_home = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    let out = gitveil_with_config_home(config_home.path(), work_dir.path(), &["config", "show"]);
+    assert_success(&out, "config show with no config");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("not set"),
+        "should say not set when no config exists: {}",
+        stdout
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_config_file_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring_dir = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &[
+            "config",
+            "set-keyring",
+            &keyring_dir.path().to_string_lossy(),
+        ],
+    );
+    assert_success(&out, "config set-keyring");
+
+    let config_file = config_home.path().join("gitveil").join("config");
+    let mode = fs::metadata(&config_file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "config file should be 0o600, got 0o{:o}", mode);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_config_dir_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring_dir = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &[
+            "config",
+            "set-keyring",
+            &keyring_dir.path().to_string_lossy(),
+        ],
+    );
+    assert_success(&out, "config set-keyring");
+
+    let config_dir = config_home.path().join("gitveil");
+    let mode = fs::metadata(&config_dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700, "config dir should be 0o700, got 0o{:o}", mode);
+}
+
+#[test]
+fn test_config_set_keyring_overwrites() {
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring_dir1 = tempfile::tempdir().unwrap();
+    let keyring_dir2 = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    // Set first
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &[
+            "config",
+            "set-keyring",
+            &keyring_dir1.path().to_string_lossy(),
+        ],
+    );
+    assert_success(&out, "config set-keyring first");
+
+    // Set second (overwrite)
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &[
+            "config",
+            "set-keyring",
+            &keyring_dir2.path().to_string_lossy(),
+        ],
+    );
+    assert_success(&out, "config set-keyring second");
+
+    // Show should have second path
+    let out = gitveil_with_config_home(config_home.path(), work_dir.path(), &["config", "show"]);
+    assert_success(&out, "config show after overwrite");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let expected = fs::canonicalize(keyring_dir2.path()).unwrap();
+    assert!(
+        stdout.contains(&expected.to_string_lossy().to_string()),
+        "should show second path.\nExpected: {}\nGot: {}",
+        expected.display(),
+        stdout
+    );
+}
+
+#[test]
+fn test_config_set_keyring_path_canonicalized() {
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring_dir = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    // Use a path with .. component
+    let subdir = keyring_dir.path().join("sub");
+    fs::create_dir(&subdir).unwrap();
+    let dotdot_path = subdir.join("..");
+
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &["config", "set-keyring", &dotdot_path.to_string_lossy()],
+    );
+    assert_success(&out, "config set-keyring with ..");
+
+    // Read raw config to verify it's canonicalized (no ..)
+    let config_file = config_home.path().join("gitveil").join("config");
+    let content = fs::read_to_string(&config_file).unwrap();
+    assert!(
+        !content.contains(".."),
+        "stored path should be canonicalized (no '..'): {}",
+        content
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_config_set_keyring_symlink_resolved() {
+    let config_home = tempfile::tempdir().unwrap();
+    let real_dir = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    // Create a symlink to the real directory
+    let symlink_path = work_dir.path().join("keyring-link");
+    std::os::unix::fs::symlink(real_dir.path(), &symlink_path).unwrap();
+
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &["config", "set-keyring", &symlink_path.to_string_lossy()],
+    );
+    assert_success(&out, "config set-keyring symlink");
+
+    // Read raw config — should contain the real path, not the symlink
+    let config_file = config_home.path().join("gitveil").join("config");
+    let content = fs::read_to_string(&config_file).unwrap();
+    let expected = fs::canonicalize(real_dir.path()).unwrap();
+    assert_eq!(
+        content.trim(),
+        expected.to_string_lossy().as_ref(),
+        "stored path should be the real path, not the symlink"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_config_set_keyring_rejects_symlink_to_file() {
+    let config_home = tempfile::tempdir().unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+
+    // Create a regular file
+    let file = work_dir.path().join("not-a-dir.txt");
+    fs::write(&file, "hello").unwrap();
+
+    // Create symlink to that file
+    let symlink_path = work_dir.path().join("link-to-file");
+    std::os::unix::fs::symlink(&file, &symlink_path).unwrap();
+
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        work_dir.path(),
+        &["config", "set-keyring", &symlink_path.to_string_lossy()],
+    );
+    assert!(!out.status.success(), "should reject symlink to file");
+}
+
+// ─── add-gpg-user Keyring Fallback Tests ───────────────────────
+
+#[test]
+fn test_add_gpg_user_no_args_no_keyring_shows_error() {
+    let dir = make_test_repo();
+    let config_home = tempfile::tempdir().unwrap();
+
+    // Init so the repo has keys
+    assert_success(
+        &gitveil_with_config_home(config_home.path(), dir.path(), &["init"]),
+        "gitveil init",
+    );
+
+    // No args, no keyring configured
+    let out = gitveil_with_config_home(config_home.path(), dir.path(), &["add-gpg-user"]);
+    assert!(
+        !out.status.success(),
+        "should fail with no args and no keyring"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("GPG user ID is required") || stderr.contains("set-keyring"),
+        "should mention GPG user ID or keyring setup: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_add_gpg_user_no_args_keyring_configured_but_empty_dir_errors() {
+    let dir = make_test_repo();
+    let config_home = tempfile::tempdir().unwrap();
+    let empty_keyring = tempfile::tempdir().unwrap();
+
+    // Init
+    assert_success(
+        &gitveil_with_config_home(config_home.path(), dir.path(), &["init"]),
+        "gitveil init",
+    );
+
+    // Configure keyring to empty dir
+    assert_success(
+        &gitveil_with_config_home(
+            config_home.path(),
+            dir.path(),
+            &[
+                "config",
+                "set-keyring",
+                &empty_keyring.path().to_string_lossy(),
+            ],
+        ),
+        "config set-keyring",
+    );
+
+    // add-gpg-user with no args should try keyring, find nothing
+    let out = gitveil_with_config_home(config_home.path(), dir.path(), &["add-gpg-user"]);
+    assert!(
+        !out.status.success(),
+        "should fail when keyring dir is empty"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no GPG public key files found"),
+        "should say no keys found: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_add_gpg_user_no_args_keyring_dir_gone_errors() {
+    let dir = make_test_repo();
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring = tempfile::tempdir().unwrap();
+    let keyring_path = keyring.path().to_path_buf();
+
+    // Init
+    assert_success(
+        &gitveil_with_config_home(config_home.path(), dir.path(), &["init"]),
+        "gitveil init",
+    );
+
+    // Configure keyring
+    assert_success(
+        &gitveil_with_config_home(
+            config_home.path(),
+            dir.path(),
+            &["config", "set-keyring", &keyring_path.to_string_lossy()],
+        ),
+        "config set-keyring",
+    );
+
+    // Delete the keyring directory
+    drop(keyring);
+    assert!(!keyring_path.exists(), "keyring dir should be deleted");
+
+    // add-gpg-user should report the dir is gone
+    let out = gitveil_with_config_home(config_home.path(), dir.path(), &["add-gpg-user"]);
+    assert!(
+        !out.status.success(),
+        "should fail when keyring dir is deleted"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no longer exists"),
+        "should say keyring path no longer exists: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_add_gpg_user_from_still_takes_precedence() {
+    let dir = make_test_repo();
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring = tempfile::tempdir().unwrap();
+    let from_dir = tempfile::tempdir().unwrap();
+
+    // Init
+    assert_success(
+        &gitveil_with_config_home(config_home.path(), dir.path(), &["init"]),
+        "gitveil init",
+    );
+
+    // Configure keyring
+    assert_success(
+        &gitveil_with_config_home(
+            config_home.path(),
+            dir.path(),
+            &["config", "set-keyring", &keyring.path().to_string_lossy()],
+        ),
+        "config set-keyring",
+    );
+
+    // --from with an empty dir should use --from, not keyring
+    let out = gitveil_with_config_home(
+        config_home.path(),
+        dir.path(),
+        &["add-gpg-user", "--from", &from_dir.path().to_string_lossy()],
+    );
+    assert!(!out.status.success(), "should fail (empty --from dir)");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no GPG public key files found"),
+        "--from should take precedence over keyring: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_add_gpg_user_userid_still_takes_precedence() {
+    let dir = make_test_repo();
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring = tempfile::tempdir().unwrap();
+    let gpg_home = tempfile::tempdir().unwrap();
+
+    // Init
+    assert_success(
+        &gitveil_with_config_home(config_home.path(), dir.path(), &["init"]),
+        "gitveil init",
+    );
+
+    // Configure keyring
+    assert_success(
+        &gitveil_with_config_home(
+            config_home.path(),
+            dir.path(),
+            &["config", "set-keyring", &keyring.path().to_string_lossy()],
+        ),
+        "config set-keyring",
+    );
+
+    // Provide a bogus user ID — should attempt GPG lookup, not keyring scan.
+    // Set GNUPGHOME to an empty temp dir so GPG fails fast on all platforms
+    // (prevents hangs on Windows where GPG may try to initialize a default keyring).
+    let out = Command::new(gitveil_bin())
+        .args(["add-gpg-user", "nonexistent-user@test.invalid"])
+        .current_dir(dir.path())
+        .env("XDG_CONFIG_HOME", config_home.path())
+        .env("GNUPGHOME", gpg_home.path())
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "should fail (user not in GPG keyring)"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Should be a GPG error, not a keyring/scan error
+    assert!(
+        stderr.to_lowercase().contains("gpg"),
+        "error should be from GPG lookup, not keyring scan: {}",
+        stderr
+    );
+}
+
+// ─── Scan Security Tests ───────────────────────────────────────
+
+#[test]
+fn test_scan_skips_non_key_extensions() {
+    let dir = make_test_repo();
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring = tempfile::tempdir().unwrap();
+
+    // Create files with non-key extensions
+    fs::write(keyring.path().join("readme.txt"), "not a key").unwrap();
+    fs::write(keyring.path().join("notes.md"), "not a key").unwrap();
+    fs::write(keyring.path().join("data.json"), "not a key").unwrap();
+
+    // Init
+    assert_success(
+        &gitveil_with_config_home(config_home.path(), dir.path(), &["init"]),
+        "gitveil init",
+    );
+
+    // Configure keyring
+    assert_success(
+        &gitveil_with_config_home(
+            config_home.path(),
+            dir.path(),
+            &["config", "set-keyring", &keyring.path().to_string_lossy()],
+        ),
+        "config set-keyring",
+    );
+
+    // Should report no keys found (non-key extensions ignored)
+    let out = gitveil_with_config_home(config_home.path(), dir.path(), &["add-gpg-user"]);
+    assert!(!out.status.success(), "should fail with only non-key files");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no GPG public key files found"),
+        "should report no keys found: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_scan_empty_directory() {
+    let dir = make_test_repo();
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring = tempfile::tempdir().unwrap();
+
+    // Init
+    assert_success(
+        &gitveil_with_config_home(config_home.path(), dir.path(), &["init"]),
+        "gitveil init",
+    );
+
+    // Configure empty keyring
+    assert_success(
+        &gitveil_with_config_home(
+            config_home.path(),
+            dir.path(),
+            &["config", "set-keyring", &keyring.path().to_string_lossy()],
+        ),
+        "config set-keyring",
+    );
+
+    let out = gitveil_with_config_home(config_home.path(), dir.path(), &["add-gpg-user"]);
+    assert!(!out.status.success(), "should fail with empty keyring dir");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no GPG public key files found"),
+        "should say no keys: {}",
+        stderr
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_scan_skips_symlinks() {
+    let dir = make_test_repo();
+    let config_home = tempfile::tempdir().unwrap();
+    let keyring = tempfile::tempdir().unwrap();
+
+    // Create a symlinked .asc file (should be skipped)
+    let target = tempfile::tempdir().unwrap();
+    let target_file = target.path().join("target.asc");
+    fs::write(&target_file, "fake key content").unwrap();
+    let symlink = keyring.path().join("linked.asc");
+    std::os::unix::fs::symlink(&target_file, &symlink).unwrap();
+
+    // Init
+    assert_success(
+        &gitveil_with_config_home(config_home.path(), dir.path(), &["init"]),
+        "gitveil init",
+    );
+
+    // Configure keyring
+    assert_success(
+        &gitveil_with_config_home(
+            config_home.path(),
+            dir.path(),
+            &["config", "set-keyring", &keyring.path().to_string_lossy()],
+        ),
+        "config set-keyring",
+    );
+
+    // Should skip the symlinked file and find no valid keys
+    let out = gitveil_with_config_home(config_home.path(), dir.path(), &["add-gpg-user"]);
+    assert!(
+        !out.status.success(),
+        "should fail (symlinked files skipped)"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no GPG public key files found"),
+        "should find no keys (symlink skipped): {}",
+        stderr
+    );
+}

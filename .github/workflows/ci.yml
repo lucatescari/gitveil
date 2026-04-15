@@ -34,13 +34,24 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install git-crypt (Linux)
+      - name: Install git-crypt and GPG (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y git-crypt
+        run: sudo apt-get update && sudo apt-get install -y git-crypt gnupg
 
-      - name: Install git-crypt (macOS)
+      - name: Install git-crypt and GPG (macOS)
         if: runner.os == 'macOS'
-        run: brew install git-crypt
+        run: brew install git-crypt gnupg
+
+      - name: Install GPG (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
+            Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+          }
+          scoop install gnupg
+          gpg --version
 
       - name: Check formatting
         run: cargo fmt --check
@@ -53,6 +64,9 @@ jobs:
 
       - name: Integration tests
         run: cargo test --test integration
+
+      - name: GPG integration tests
+        run: cargo test --test gpg_integration
 
       - name: Cross-compatibility tests
         run: cargo test --test cross_compat
