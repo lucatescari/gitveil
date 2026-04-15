@@ -222,6 +222,18 @@ gitveil config unset-keyring
 
 When a keyring directory is configured, `gitveil add-gpg-user` (with no arguments and no `--from`) will automatically scan the keyring directory and present an interactive picker to select GPG keys. This is useful when your team stores GPG public keys in a shared folder or git repository.
 
+The keyring directory has no special format -- it's just a folder containing GPG public key files (exported with `gpg --export` or `gpg --armor --export`). Files are matched by extension (`.asc`, `.gpg`, `.pub`, `.key`) and can be organized in subdirectories. Non-key files and symlinks are ignored.
+
+```
+team-keys/
+├── engineering/
+│   ├── alice.asc
+│   └── bob.pub
+├── design/
+│   └── carol.gpg
+└── README.md           # ignored (not a key extension)
+```
+
 The keyring path is stored in `~/.config/gitveil/config` (respects `$XDG_CONFIG_HOME`). The config file is created with 0600 permissions and the config directory with 0700 permissions.
 
 ### `gitveil rm-gpg-user`
