@@ -71,6 +71,14 @@ fn main() {
             commands::ls_gpg_users::ls_gpg_users(key_name.as_deref())
         }
 
+        Commands::Config { action } => match action {
+            cli::ConfigAction::SetKeyring { path } => {
+                commands::config::config_set_keyring(&path)
+            }
+            cli::ConfigAction::UnsetKeyring => commands::config::config_unset_keyring(),
+            cli::ConfigAction::Show => commands::config::config_show(),
+        },
+
         Commands::Completions { shell } => {
             cli::print_completions(shell);
             Ok(())
