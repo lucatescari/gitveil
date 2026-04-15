@@ -1230,13 +1230,12 @@ fn test_add_gpg_user_from_still_takes_precedence() {
     );
 }
 
-// This test invokes GPG which is not installed on Windows CI and can hang.
-#[cfg(not(target_os = "windows"))]
 #[test]
 fn test_add_gpg_user_userid_still_takes_precedence() {
     let dir = make_test_repo();
     let config_home = tempfile::tempdir().unwrap();
     let keyring = tempfile::tempdir().unwrap();
+    let gpg_home = tempfile::tempdir().unwrap();
 
     // Init
     assert_success(
@@ -1254,12 +1253,16 @@ fn test_add_gpg_user_userid_still_takes_precedence() {
         "config set-keyring",
     );
 
-    // Provide a bogus user ID — should attempt GPG lookup, not keyring scan
-    let out = gitveil_with_config_home(
-        config_home.path(),
-        dir.path(),
-        &["add-gpg-user", "nonexistent-user@test.invalid"],
-    );
+    // Provide a bogus user ID — should attempt GPG lookup, not keyring scan.
+    // Set GNUPGHOME to an empty temp dir so GPG fails fast on all platforms
+    // (prevents hangs on Windows where GPG may try to initialize a default keyring).
+    let out = Command::new(gitveil_bin())
+        .args(["add-gpg-user", "nonexistent-user@test.invalid"])
+        .current_dir(dir.path())
+        .env("XDG_CONFIG_HOME", config_home.path())
+        .env("GNUPGHOME", gpg_home.path())
+        .output()
+        .unwrap();
     assert!(
         !out.status.success(),
         "should fail (user not in GPG keyring)"
