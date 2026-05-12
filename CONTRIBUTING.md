@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 95 tests should pass (33 unit + 40 integration + 16 GPG integration + 6 cross-compatibility). They cover:
+All 112 tests should pass (34 unit + 56 integration + 16 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
@@ -34,6 +34,8 @@ All 95 tests should pass (33 unit + 40 integration + 16 GPG integration + 6 cros
 - Key name validation
 - Full E2E: init → encrypt → lock → unlock (integration)
 - Status, export-key, quiet mode, error messages (integration)
+- Status: default focused output (tracked + untracked filter-marked only), `(untracked)` suffix on untracked filter files to distinguish prospective vs actual encryption, `-a/--all` includes non-filter files, `-e` only files with encrypted blob, `-u` only WARNING files needing re-encryption, WARNING + summary for filter-marked files with plaintext blob, named-key filter, filenames with spaces, clear error outside a git repo, works without `gitveil init`, `-f` skips files deleted from the working tree, gitignored files are excluded (integration)
+- Status: `has_git_crypt_filter` recognizes default and named-key filters (unit)
 - Edge cases: empty files, binary files, multi-key lock (integration)
 - Pipe deadlock regression: many-file and large-blob status, unlock, lock (integration)
 - Global config: XDG resolution, keyring path save/load/remove, permissions (unit)
