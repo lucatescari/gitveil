@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 91 tests should pass (31 unit + 40 integration + 14 GPG integration + 6 cross-compatibility). They cover:
+All 95 tests should pass (33 unit + 40 integration + 16 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
@@ -44,6 +44,9 @@ All 91 tests should pass (31 unit + 40 integration + 14 GPG integration + 6 cros
 - GPG rm-gpg-user: remove, --no-commit, user not found (GPG integration)
 - GPG ls-gpg-users: list, no users, named key (GPG integration)
 - GPG unlock roundtrip: add user, lock, unlock via GPG (GPG integration)
+- GPG unlock with passphrase-protected key (pinentry/loopback) (GPG integration)
+- GPG unlock clear error when no secret key matches any collaborator (GPG integration)
+- GPG decrypt command builder: never passes `--batch` (suppresses pinentry) (unit)
 - GPG multi-user: add 2 users, remove 1, verify count (GPG integration)
 - Cross-tool: key exchange, encrypt/decrypt, named keys, binary files (cross-compatibility)
 

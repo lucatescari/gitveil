@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Cursor;
 use std::path::PathBuf;
 
@@ -9,7 +10,7 @@ use crate::git::config::configure_filters;
 use crate::git::repo::{
     find_git_dir, find_repo_root, get_encrypted_files, git_crypt_dir, key_path,
 };
-use crate::gpg::operations::gpg_decrypt_from_file;
+use crate::gpg::operations::{gpg_decrypt_from_file, gpg_list_secret_key_fingerprints};
 use crate::key::key_file::KeyFile;
 
 /// Unlock the repository: load key, configure filters, and decrypt working copy.
@@ -53,8 +54,19 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
             return Err(GitVeilError::NotInitialized);
         }
 
+        // Enumerate the fingerprints of secret keys in the local GPG keyring
+        // so we only attempt to decrypt collaborator files we actually have a
+        // private key for. This stops pinentry from being invoked once per
+        // collaborator and stops gpg from spamming stderr with "no secret
+        // key" for keys we obviously cannot decrypt.
+        let secret_fps: HashSet<String> = gpg_list_secret_key_fingerprints()?
+            .into_iter()
+            .map(|f| f.to_ascii_lowercase())
+            .collect();
+
         let mut unlocked_any = false;
         let mut last_gpg_error: Option<String> = None;
+        let mut any_collaborator_found = false;
 
         // Iterate over key directories (skip symlinks)
         let key_dirs: Vec<_> = std::fs::read_dir(&keys_dir)?
@@ -69,7 +81,22 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
             let key_dir = key_dir_entry.path();
             let gpg_files = find_gpg_files(&key_dir);
 
+            if !gpg_files.is_empty() {
+                any_collaborator_found = true;
+            }
+
             for gpg_file in &gpg_files {
+                let stem = gpg_file
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_ascii_lowercase())
+                    .unwrap_or_default();
+
+                // Skip files encrypted to recipients we don't have a secret
+                // key for. Filenames are the recipient's primary fingerprint.
+                if !secret_fps.contains(&stem) {
+                    continue;
+                }
+
                 match gpg_decrypt_from_file(gpg_file) {
                     Ok(key_data) => {
                         let mut cursor = Cursor::new(key_data.as_slice());
@@ -103,14 +130,27 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
         }
 
         if !unlocked_any {
-            let detail = last_gpg_error
-                .map(|e| format!(" Last error: {}", e))
-                .unwrap_or_default();
-            return Err(GitVeilError::Gpg(format!(
-                "failed to decrypt any GPG-encrypted key. \
-                 Do you have the right GPG private key?{}",
-                detail
-            )));
+            if !any_collaborator_found {
+                return Err(GitVeilError::Gpg(
+                    "no GPG-encrypted keys found in .git-crypt/keys/".into(),
+                ));
+            }
+            if let Some(detail) = last_gpg_error {
+                // A matching key was attempted but decryption failed (e.g.,
+                // the user cancelled the pinentry prompt, or the secret key
+                // is no longer available to gpg-agent).
+                return Err(GitVeilError::Gpg(format!(
+                    "GPG decryption failed. {}",
+                    detail
+                )));
+            }
+            // Collaborators exist but none match a secret key in our keyring.
+            return Err(GitVeilError::Gpg(
+                "no GPG secret key in your keyring matches any collaborator on this \
+                 repository. Make sure the right private key is imported (try \
+                 `gpg --list-secret-keys`)."
+                    .into(),
+            ));
         }
     }
 
