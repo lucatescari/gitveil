@@ -171,6 +171,8 @@ gitveil unlock [<key-file>...]
 
 Without arguments, attempts GPG-based unlock using keys in `.git-crypt/`. With key file arguments, uses symmetric key files.
 
+If your GPG private key is passphrase-protected, gitveil will let `gpg-agent` invoke pinentry to prompt you (terminal or GUI), just like `git-crypt`. Only collaborator files matching a secret key in your local keyring are tried, so pinentry fires at most once.
+
 ### `gitveil add-gpg-user`
 
 Add a GPG user as a collaborator.
