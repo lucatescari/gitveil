@@ -285,7 +285,7 @@ Omit the output file to write to stdout.
 
 ### `gitveil status`
 
-Show encryption status of tracked files.
+Show the encryption status of files in the repository.
 
 ```
 gitveil status [-e] [-u] [-f]
@@ -293,11 +293,15 @@ gitveil status [-e] [-u] [-f]
 
 | Option | Description |
 |--------|-------------|
-| `-e` | Show only encrypted files |
-| `-u` | Show only unencrypted files |
-| `-f, --fix` | Re-encrypt files that should be encrypted but aren't |
+| `-e` | Show only files marked for encryption (filter=git-crypt) |
+| `-u` | Show only files without the git-crypt filter |
+| `-f, --fix` | Re-stage tracked files whose committed blob is plaintext but should be encrypted |
 
-The status command uses batched subprocesses (3 total, regardless of repo size) instead of spawning one per file. On a Unity project with ~4,000 files it completes in ~130 ms vs ~65 seconds for git-crypt -- roughly 500x faster.
+Matches `git-crypt status`: lists **tracked AND untracked** files (excluding gitignored), with `    encrypted:` for filter-marked files and `not encrypted:` for everything else. If a filter-marked file's committed blob is plaintext (typically because it was staged before `.gitattributes` was in effect), a `*** WARNING ***` is appended and a summary at the end suggests running with `-f`. Untracked filter-marked files are listed without a warning (they have no blob yet) and are not auto-staged by `-f`.
+
+Works without `gitveil init` -- the command is informational and can be used to audit which files will be encrypted before initializing.
+
+Performance: at most one `git ls-files` per category, one batched `git check-attr`, and one batched `git cat-file` regardless of repo size. On a Unity project with ~4,000 files it completes in ~130 ms vs ~65 seconds for git-crypt -- roughly 500x faster.
 
 ## Named Keys
 

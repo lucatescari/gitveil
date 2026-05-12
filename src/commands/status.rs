@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -6,87 +7,201 @@ use colored::Colorize;
 
 use crate::constants::{ENCRYPTED_FILE_HEADER, ENCRYPTED_FILE_HEADER_LEN};
 use crate::error::GitVeilError;
+use crate::git::repo::find_git_dir;
 
-/// Display the encryption status of tracked files.
+/// A file from `git ls-files` along with whether it is tracked.
+struct FileEntry {
+    path: String,
+    tracked: bool,
+}
+
+/// Display the encryption status of files in the repository.
 ///
-/// Performance: uses only 3 subprocesses regardless of repo size:
-/// 1. `git ls-files` — list all tracked files
-/// 2. `git check-attr -z --stdin` — batch-check filter attributes
-/// 3. `git cat-file --batch` — batch-check blob headers for encryption
+/// Mirrors `git-crypt status` semantics:
+///   - lists tracked AND untracked files (excluding gitignored)
+///   - "    encrypted:" prefix when the file has a git-crypt filter
+///   - "not encrypted:" prefix when no filter applies
+///   - WARNING suffix when a filter-marked file's index blob is plaintext
+///     (i.e., it was staged before the filter was in effect)
+///
+/// Performance: at most one `git ls-files` per category (tracked/untracked),
+/// one batched `git check-attr -z --stdin`, and one batched `git cat-file
+/// --batch` regardless of repo size.
 pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result<(), GitVeilError> {
-    // Get all tracked files
-    let ls_output = Command::new("git")
-        .args(["ls-files"])
-        .output()
-        .map_err(|e| GitVeilError::Git(format!("failed to run git ls-files: {}", e)))?;
+    // Validate up-front that we're inside a git work tree. Without this the
+    // failure mode is a confusing "git ls-files failed" message instead of
+    // the clean NotAGitRepo error.
+    find_git_dir()?;
 
-    if !ls_output.status.success() {
-        return Err(GitVeilError::Git("git ls-files failed".into()));
-    }
-
-    let all_files_str = String::from_utf8_lossy(&ls_output.stdout);
-    let all_files: Vec<&str> = all_files_str.lines().filter(|l| !l.is_empty()).collect();
-
-    if all_files.is_empty() {
+    let files = list_all_files()?;
+    if files.is_empty() {
         return Ok(());
     }
 
-    // Batch check attributes using -z --stdin (NUL-delimited, single subprocess)
-    let git_crypt_files = get_git_crypt_files(&all_files)?;
+    // Map every file (tracked or not) to its filter value, if any.
+    let filter_map = batch_check_filters(&files)?;
 
-    if git_crypt_files.is_empty() {
-        return Ok(());
-    }
+    // Blob-check only tracked files that have a git-crypt filter. Untracked
+    // files have no blob in the index (cat-file would return "missing"), and
+    // non-filter files don't need the check.
+    let tracked_filter_paths: Vec<String> = files
+        .iter()
+        .filter(|f| {
+            f.tracked
+                && filter_map
+                    .get(&f.path)
+                    .map(|v| has_git_crypt_filter(v))
+                    .unwrap_or(false)
+        })
+        .map(|f| f.path.clone())
+        .collect();
 
-    // Batch check which blobs are actually encrypted (single subprocess)
-    let encrypted_flags = batch_check_blobs_encrypted(&git_crypt_files)?;
+    let blob_encrypted = if tracked_filter_paths.is_empty() {
+        Vec::new()
+    } else {
+        batch_check_blobs_encrypted(&tracked_filter_paths)?
+    };
 
-    let mut files_to_fix = Vec::new();
+    let blob_status: HashMap<&str, bool> = tracked_filter_paths
+        .iter()
+        .map(|s| s.as_str())
+        .zip(blob_encrypted.iter().copied())
+        .collect();
 
-    for (file, is_encrypted) in git_crypt_files.iter().zip(encrypted_flags.iter()) {
-        if *is_encrypted {
-            if !unencrypted_only {
-                println!("  {} {}", "encrypted:".green(), file);
+    let mut warning_files: Vec<String> = Vec::new();
+
+    for file in &files {
+        let has_filter = filter_map
+            .get(&file.path)
+            .map(|v| has_git_crypt_filter(v))
+            .unwrap_or(false);
+
+        if has_filter {
+            if unencrypted_only {
+                continue;
+            }
+
+            // Untracked files have no blob; we only emit a WARNING when the
+            // staged blob exists and is unencrypted.
+            let plain_blob =
+                file.tracked && !blob_status.get(file.path.as_str()).copied().unwrap_or(true);
+
+            if plain_blob {
+                println!(
+                    "    {} {} {}",
+                    "encrypted:".green(),
+                    file.path,
+                    "*** WARNING: staged/committed version is NOT ENCRYPTED! ***"
+                        .red()
+                        .bold(),
+                );
+                warning_files.push(file.path.clone());
+            } else {
+                println!("    {} {}", "encrypted:".green(), file.path);
             }
         } else {
-            if !encrypted_only {
-                println!("{} {}", "not encrypted:".yellow(), file);
+            if encrypted_only {
+                continue;
             }
-            if fix {
-                files_to_fix.push(file.clone());
-            }
+            println!("not encrypted: {}", file.path);
         }
     }
 
-    if fix && !files_to_fix.is_empty() {
+    if !warning_files.is_empty() {
+        eprintln!();
         eprintln!(
-            "{} {} file(s)...",
-            "Fixing".cyan().bold(),
-            files_to_fix.len()
+            "{} one or more files is marked for encryption via .gitattributes",
+            "Warning:".yellow().bold(),
         );
-        for file in &files_to_fix {
-            let status = Command::new("git")
-                .args(["add", "--", file])
-                .status()
-                .map_err(|e| GitVeilError::Git(format!("failed to stage {}: {}", file, e)))?;
-
-            if !status.success() {
-                eprintln!("{} failed to stage {}", "warning:".yellow().bold(), file);
-            }
+        eprintln!("but was staged and/or committed before the .gitattributes file");
+        eprintln!("was in effect.");
+        if !fix {
+            eprintln!(
+                "Run '{}' to stage an encrypted version.",
+                "gitveil status -f".bold(),
+            );
         }
-        eprintln!(
-            "{} Run '{}' to save the re-encrypted files.",
-            "Done.".green().bold(),
-            "git commit".bold()
-        );
+
+        if fix {
+            eprintln!();
+            eprintln!(
+                "{} {} file(s)...",
+                "Fixing".cyan().bold(),
+                warning_files.len(),
+            );
+            for file in &warning_files {
+                let st = Command::new("git")
+                    .args(["add", "--"])
+                    .arg(file)
+                    .status()
+                    .map_err(|e| GitVeilError::Git(format!("failed to stage {}: {}", file, e)))?;
+                if !st.success() {
+                    eprintln!("{} failed to stage {}", "warning:".yellow().bold(), file);
+                }
+            }
+            eprintln!(
+                "{} Run '{}' to save the re-encrypted files.",
+                "Done.".green().bold(),
+                "git commit".bold(),
+            );
+        }
     }
 
     Ok(())
 }
 
-/// Batch-check which files have a git-crypt filter attribute.
-/// Uses NUL-delimited output (-z) to handle filenames with special characters.
-fn get_git_crypt_files(files: &[&str]) -> Result<Vec<String>, GitVeilError> {
+/// True when the file's filter attribute is a gitveil/git-crypt filter.
+/// Recognizes both the default `git-crypt` and named-key `git-crypt-<name>`.
+fn has_git_crypt_filter(value: &str) -> bool {
+    value.starts_with("git-crypt")
+}
+
+/// List tracked + untracked files (excluding gitignored), ordered to match
+/// git-crypt: untracked first, then tracked, each alphabetical.
+fn list_all_files() -> Result<Vec<FileEntry>, GitVeilError> {
+    let untracked = ls_files_nul(&["ls-files", "-z", "--others", "--exclude-standard"])?;
+    let tracked = ls_files_nul(&["ls-files", "-z"])?;
+
+    let mut result: Vec<FileEntry> = untracked
+        .into_iter()
+        .map(|path| FileEntry {
+            path,
+            tracked: false,
+        })
+        .collect();
+    result.extend(tracked.into_iter().map(|path| FileEntry {
+        path,
+        tracked: true,
+    }));
+    Ok(result)
+}
+
+/// Run a `git ls-files` variant with `-z` and parse its NUL-delimited output.
+/// Using NUL is essential for filenames containing whitespace or other
+/// special characters.
+fn ls_files_nul(args: &[&str]) -> Result<Vec<String>, GitVeilError> {
+    let out = Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|e| GitVeilError::Git(format!("failed to run git {:?}: {}", args, e)))?;
+
+    if !out.status.success() {
+        return Err(GitVeilError::Git(format!("git {:?} failed", args)));
+    }
+
+    let mut files = Vec::new();
+    for chunk in out.stdout.split(|&b| b == 0) {
+        if chunk.is_empty() {
+            continue;
+        }
+        files.push(String::from_utf8_lossy(chunk).into_owned());
+    }
+    Ok(files)
+}
+
+/// Batch-resolve the `filter` attribute for every file. Returns a map from
+/// path → filter value when the value is not the literal `unspecified`.
+fn batch_check_filters(files: &[FileEntry]) -> Result<HashMap<String, String>, GitVeilError> {
     let mut child = Command::new("git")
         .args(["check-attr", "-z", "filter", "--stdin"])
         .stdin(Stdio::piped())
@@ -100,46 +215,41 @@ fn get_git_crypt_files(files: &[&str]) -> Result<Vec<String>, GitVeilError> {
         .take()
         .ok_or_else(|| GitVeilError::Git("failed to open check-attr stdin".into()))?;
 
-    // Write paths on a separate thread to avoid pipe deadlock when the
-    // number of files is large enough to overflow the OS pipe buffer.
-    let paths: Vec<String> = files.iter().map(|f| f.to_string()).collect();
-    let writer_thread = thread::spawn(move || {
+    // Writer thread prevents pipe deadlock when the number of files exceeds
+    // the OS pipe buffer (~64 KB on Linux, smaller on Windows).
+    let paths: Vec<String> = files.iter().map(|f| f.path.clone()).collect();
+    let writer = thread::spawn(move || {
         let mut stdin = stdin;
-        for file in &paths {
-            if write!(stdin, "{}\0", file).is_err() {
+        for path in &paths {
+            if write!(stdin, "{}\0", path).is_err() {
                 break;
             }
         }
     });
 
-    let output = child
+    let out = child
         .wait_with_output()
         .map_err(|e| GitVeilError::Git(format!("failed to wait for git check-attr: {}", e)))?;
 
-    let _ = writer_thread.join();
+    let _ = writer.join();
 
-    if !output.status.success() {
+    if !out.status.success() {
         return Err(GitVeilError::Git("git check-attr -z --stdin failed".into()));
     }
 
-    // NUL-delimited output format: path\0attr\0value\0 (repeating triplets)
-    let fields: Vec<&[u8]> = output.stdout.split(|&b| b == 0).collect();
-    let mut result = Vec::new();
-
-    // Process in triplets: (path, attribute_name, value)
+    // NUL-delimited triplets: path\0attr\0value\0
+    let fields: Vec<&[u8]> = out.stdout.split(|&b| b == 0).collect();
+    let mut map = HashMap::new();
     let mut i = 0;
     while i + 2 < fields.len() {
-        let path = String::from_utf8_lossy(fields[i]);
-        let value = String::from_utf8_lossy(fields[i + 2]);
-
-        if value.starts_with("git-crypt") {
-            result.push(path.to_string());
+        let path = String::from_utf8_lossy(fields[i]).into_owned();
+        let value = String::from_utf8_lossy(fields[i + 2]).into_owned();
+        if value != "unspecified" && value != "unset" && !value.is_empty() {
+            map.insert(path, value);
         }
-
         i += 3;
     }
-
-    Ok(result)
+    Ok(map)
 }
 
 /// Batch-check whether blobs in the index are encrypted using a single
@@ -171,9 +281,8 @@ fn batch_check_blobs_encrypted(files: &[String]) -> Result<Vec<bool>, GitVeilErr
         .take()
         .ok_or_else(|| GitVeilError::Git("failed to open cat-file stdout".into()))?;
 
-    // Write queries on a separate thread to avoid pipe deadlock.
-    // If we wrote all queries before reading, the stdout pipe could fill up
-    // (e.g. large blobs), blocking cat-file, which in turn blocks our writes.
+    // Writer thread prevents pipe deadlock: with large blobs, reading must
+    // proceed concurrently with writing.
     let queries: Vec<String> = files.iter().map(|f| format!(":{}", f)).collect();
     let writer_thread = thread::spawn(move || {
         let mut stdin = stdin;
@@ -182,14 +291,12 @@ fn batch_check_blobs_encrypted(files: &[String]) -> Result<Vec<bool>, GitVeilErr
                 break;
             }
         }
-        // stdin is dropped here, signaling EOF to cat-file
     });
 
     let mut reader = BufReader::new(stdout);
     let mut results = Vec::with_capacity(files.len());
 
     for _ in files {
-        // Read the response header line: "<sha> blob <size>\n" or ":<path> missing\n"
         let mut header_line = String::new();
         reader
             .read_line(&mut header_line)
@@ -198,12 +305,10 @@ fn batch_check_blobs_encrypted(files: &[String]) -> Result<Vec<bool>, GitVeilErr
         let header_line = header_line.trim_end_matches('\n');
 
         if header_line.ends_with(" missing") {
-            // File not in index
             results.push(false);
             continue;
         }
 
-        // Parse "<sha> blob <size>"
         let size: usize = header_line
             .rsplit_once(' ')
             .and_then(|(_, s)| s.parse().ok())
@@ -212,14 +317,11 @@ fn batch_check_blobs_encrypted(files: &[String]) -> Result<Vec<bool>, GitVeilErr
             })?;
 
         if size < ENCRYPTED_FILE_HEADER_LEN {
-            // Too small to contain the header — not encrypted
-            // Drain the content + trailing newline
             drain_bytes(&mut reader, size + 1)?;
             results.push(false);
             continue;
         }
 
-        // Read just the header bytes we need
         let mut header_buf = [0u8; ENCRYPTED_FILE_HEADER_LEN];
         reader
             .read_exact(&mut header_buf)
@@ -227,26 +329,35 @@ fn batch_check_blobs_encrypted(files: &[String]) -> Result<Vec<bool>, GitVeilErr
 
         let is_encrypted = header_buf == ENCRYPTED_FILE_HEADER;
 
-        // Drain the remaining blob bytes + trailing newline
         let remaining = size - ENCRYPTED_FILE_HEADER_LEN + 1;
         drain_bytes(&mut reader, remaining)?;
 
         results.push(is_encrypted);
     }
 
-    // Wait for the writer thread to finish
     let _ = writer_thread.join();
-
-    // Wait for cat-file to exit
     let _ = child.wait();
 
     Ok(results)
 }
 
-/// Drain `count` bytes from a reader by copying to sink.
-/// Avoids allocating a buffer for large blobs.
 fn drain_bytes(reader: &mut impl Read, count: usize) -> Result<(), GitVeilError> {
     std::io::copy(&mut reader.take(count as u64), &mut std::io::sink())
         .map_err(|e| GitVeilError::Git(format!("failed to drain cat-file output: {}", e)))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn has_git_crypt_filter_recognizes_default_and_named() {
+        assert!(has_git_crypt_filter("git-crypt"));
+        assert!(has_git_crypt_filter("git-crypt-backend"));
+        assert!(has_git_crypt_filter("git-crypt-team-xyz"));
+        assert!(!has_git_crypt_filter("unspecified"));
+        assert!(!has_git_crypt_filter("lfs"));
+        assert!(!has_git_crypt_filter(""));
+    }
 }
