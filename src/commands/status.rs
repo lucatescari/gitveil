@@ -129,7 +129,22 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
                 "Fixing".cyan().bold(),
                 warning_files.len(),
             );
+            let mut fixed = 0usize;
             for file in &warning_files {
+                // A warning file may have been deleted from the working tree
+                // (still tracked, plaintext blob, no longer on disk). In that
+                // case `git add` would stage the *deletion* — the opposite of
+                // re-encrypting. Skip such files with a clear diagnostic.
+                if !std::path::Path::new(file).exists() {
+                    eprintln!(
+                        "{} skipping {}: file no longer exists in the working \
+                         tree (use `git rm` to remove, or restore the file to \
+                         re-encrypt it)",
+                        "warning:".yellow().bold(),
+                        file,
+                    );
+                    continue;
+                }
                 let st = Command::new("git")
                     .args(["add", "--"])
                     .arg(file)
@@ -137,11 +152,16 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
                     .map_err(|e| GitVeilError::Git(format!("failed to stage {}: {}", file, e)))?;
                 if !st.success() {
                     eprintln!("{} failed to stage {}", "warning:".yellow().bold(), file);
+                    continue;
                 }
+                fixed += 1;
             }
             eprintln!(
-                "{} Run '{}' to save the re-encrypted files.",
+                "{} re-staged {} of {} file(s). Run '{}' to save the \
+                 re-encrypted blobs.",
                 "Done.".green().bold(),
+                fixed,
+                warning_files.len(),
                 "git commit".bold(),
             );
         }

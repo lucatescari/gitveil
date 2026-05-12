@@ -974,10 +974,22 @@ fn test_status_fix_restages_only_warning_files() {
 
     let staged = git(dir.path(), &["diff", "--cached", "--name-only"]);
     let staged_out = String::from_utf8_lossy(&staged.stdout);
+    // Diagnostic-heavy message — this test has flaked once during local runs
+    // with `staged_out` empty; capturing full state makes any future flake
+    // immediately debuggable.
     assert!(
         staged_out.contains("bad.secret"),
-        "bad.secret (tracked + filter + plain blob) should be re-staged by -f, got: {}",
+        "bad.secret (tracked + filter + plain blob) should be re-staged by -f.\n\
+         gitveil status -f stdout:\n{}\n\
+         gitveil status -f stderr:\n{}\n\
+         git diff --cached --name-only stdout: {:?}\n\
+         git diff --cached --name-only stderr: {:?}\n\
+         git status --porcelain:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
         staged_out,
+        String::from_utf8_lossy(&staged.stderr),
+        String::from_utf8_lossy(&git(dir.path(), &["status", "--porcelain"]).stdout),
     );
     assert!(
         !staged_out.contains("new.secret"),
@@ -990,6 +1002,81 @@ fn test_status_fix_restages_only_warning_files() {
     assert!(
         blob.stdout.starts_with(b"\0GITCRYPT\0"),
         "re-staged bad.secret blob should be encrypted now",
+    );
+}
+
+#[test]
+fn test_status_fix_skips_file_deleted_from_working_tree() {
+    // A tracked filter-marked file with a plaintext blob whose working-copy
+    // has been deleted: -f must NOT stage that, because `git add <missing>`
+    // stages the *deletion* (removing the file from the index). The intent
+    // of -f is to re-encrypt, not to silently remove tracked files.
+    let dir = make_test_repo();
+    assert_success(&gitveil(dir.path(), &["init"]), "init");
+
+    fs::write(dir.path().join("bad.secret"), "plaintext\n").unwrap();
+    assert_success(&git(dir.path(), &["add", "bad.secret"]), "add bad");
+    assert_success(&git(dir.path(), &["commit", "-m", "pre"]), "commit bad");
+
+    fs::write(
+        dir.path().join(".gitattributes"),
+        "*.secret filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+    assert_success(&git(dir.path(), &["add", ".gitattributes"]), "add attrs");
+    assert_success(&git(dir.path(), &["commit", "-m", "attrs"]), "commit attrs");
+
+    // Delete from working tree (still tracked in index).
+    fs::remove_file(dir.path().join("bad.secret")).unwrap();
+
+    let out = gitveil(dir.path(), &["status", "-f"]);
+    assert_success(&out, "status -f on deleted file");
+
+    let staged = git(dir.path(), &["diff", "--cached", "--name-status"]);
+    let staged_out = String::from_utf8_lossy(&staged.stdout);
+    assert!(
+        !staged_out.contains("bad.secret"),
+        "-f must NOT stage anything for a file deleted from the working \
+         tree (would stage the deletion). Got: {}",
+        staged_out,
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_lowercase();
+    assert!(
+        stderr.contains("skip") || stderr.contains("deleted") || stderr.contains("no longer"),
+        "should emit a diagnostic explaining the skip, got stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+#[test]
+fn test_status_excludes_gitignored_files() {
+    // --exclude-standard makes git ls-files --others skip files matched by
+    // .gitignore. Regression guard: nothing else accidentally surfaces them.
+    let dir = make_test_repo();
+    assert_success(&gitveil(dir.path(), &["init"]), "init");
+
+    fs::write(dir.path().join(".gitignore"), "ignored.txt\n*.tmp\n").unwrap();
+    fs::write(dir.path().join("ignored.txt"), "skip me\n").unwrap();
+    fs::write(dir.path().join("draft.tmp"), "skip me\n").unwrap();
+    fs::write(dir.path().join("public.txt"), "include me\n").unwrap();
+
+    let out = gitveil(dir.path(), &["status"]);
+    assert_success(&out, "status");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("public.txt"),
+        "non-ignored file should appear, got: {}",
+        stdout,
+    );
+    assert!(
+        !stdout.contains("ignored.txt"),
+        "gitignored file should not appear, got: {}",
+        stdout,
+    );
+    assert!(
+        !stdout.contains("draft.tmp"),
+        "gitignored pattern file should not appear, got: {}",
+        stdout,
     );
 }
 
