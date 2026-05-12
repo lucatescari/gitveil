@@ -17,17 +17,29 @@ struct FileEntry {
 
 /// Display the encryption status of files in the repository.
 ///
-/// Mirrors `git-crypt status` semantics:
-///   - lists tracked AND untracked files (excluding gitignored)
-///   - "    encrypted:" prefix when the file has a git-crypt filter
-///   - "not encrypted:" prefix when no filter applies
-///   - WARNING suffix when a filter-marked file's index blob is plaintext
-///     (i.e., it was staged before the filter was in effect)
+/// By default the output is focused on files governed by a git-crypt
+/// filter — for a large repo this is the actionable subset. A WARNING
+/// suffix is appended when a filter-marked tracked file's index blob is
+/// plaintext (typically staged before `.gitattributes` was in effect),
+/// and a summary points at `-f`. Pass `--all` to also list files without
+/// the filter (git-crypt-style verbose output).
+///
+/// Flags:
+///   - `-e`: only files whose blob is encrypted
+///   - `-u`: only files marked for encryption whose blob is plaintext
+///     (the WARNING set — pair with `-f` to re-stage them)
+///   - `-a`/`--all`: include files without the git-crypt filter too
+///   - `-f`: re-stage WARNING files so the clean filter encrypts them
 ///
 /// Performance: at most one `git ls-files` per category (tracked/untracked),
 /// one batched `git check-attr -z --stdin`, and one batched `git cat-file
 /// --batch` regardless of repo size.
-pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result<(), GitVeilError> {
+pub fn status(
+    encrypted_only: bool,
+    unencrypted_only: bool,
+    all: bool,
+    fix: bool,
+) -> Result<(), GitVeilError> {
     // Validate up-front that we're inside a git work tree. Without this the
     // failure mode is a confusing "git ls-files failed" message instead of
     // the clean NotAGitRepo error.
@@ -68,6 +80,13 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
         .zip(blob_encrypted.iter().copied())
         .collect();
 
+    // Display selectors. WARNING files are always collected (used by -f
+    // and the summary) even when not printed, so `-e -f` still re-stages
+    // them — the suppression applies to *display only*.
+    let show_warning_lines = !encrypted_only;
+    let show_encrypted_lines = !unencrypted_only;
+    let show_non_filter_lines = all && !encrypted_only && !unencrypted_only;
+
     let mut warning_files: Vec<String> = Vec::new();
 
     for file in &files {
@@ -77,32 +96,27 @@ pub fn status(encrypted_only: bool, unencrypted_only: bool, fix: bool) -> Result
             .unwrap_or(false);
 
         if has_filter {
-            if unencrypted_only {
-                continue;
-            }
-
-            // Untracked files have no blob; we only emit a WARNING when the
-            // staged blob exists and is unencrypted.
+            // Untracked files have no blob, so they never produce a
+            // WARNING — only the staged/committed blob can be plaintext.
             let plain_blob =
                 file.tracked && !blob_status.get(file.path.as_str()).copied().unwrap_or(true);
 
             if plain_blob {
-                println!(
-                    "    {} {} {}",
-                    "encrypted:".green(),
-                    file.path,
-                    "*** WARNING: staged/committed version is NOT ENCRYPTED! ***"
-                        .red()
-                        .bold(),
-                );
                 warning_files.push(file.path.clone());
-            } else {
+                if show_warning_lines {
+                    println!(
+                        "    {} {} {}",
+                        "encrypted:".green(),
+                        file.path,
+                        "*** WARNING: staged/committed version is NOT ENCRYPTED! ***"
+                            .red()
+                            .bold(),
+                    );
+                }
+            } else if show_encrypted_lines {
                 println!("    {} {}", "encrypted:".green(), file.path);
             }
-        } else {
-            if encrypted_only {
-                continue;
-            }
+        } else if show_non_filter_lines {
             println!("not encrypted: {}", file.path);
         }
     }

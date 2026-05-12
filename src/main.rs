@@ -58,8 +58,9 @@ fn main() {
         Commands::Status {
             encrypted_only,
             unencrypted_only,
+            all,
             fix,
-        } => commands::status::status(encrypted_only, unencrypted_only, fix),
+        } => commands::status::status(encrypted_only, unencrypted_only, all, fix),
 
         Commands::RmGpgUser {
             key_name,

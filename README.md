@@ -288,18 +288,22 @@ Omit the output file to write to stdout.
 Show the encryption status of files in the repository.
 
 ```
-gitveil status [-e] [-u] [-f]
+gitveil status [-e] [-u] [-a | --all] [-f | --fix]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `-e` | Show only files marked for encryption (filter=git-crypt) |
-| `-u` | Show only files without the git-crypt filter |
-| `-f, --fix` | Re-stage tracked files whose committed blob is plaintext but should be encrypted |
+| _(none)_ | List files marked for encryption (the actionable set), tracked + untracked |
+| `-e` | Show only files whose committed blob is encrypted |
+| `-u` | Show only files marked for encryption whose blob is plaintext (the set needing re-encryption — pair with `-f` to fix) |
+| `-a, --all` | Include files **without** the git-crypt filter too (verbose `git-crypt`-style listing) |
+| `-f, --fix` | Re-stage tracked files whose committed blob is plaintext but should be encrypted (skips files deleted from the working tree; never auto-adds untracked files) |
 
-Matches `git-crypt status`: lists **tracked AND untracked** files (excluding gitignored), with `    encrypted:` for filter-marked files and `not encrypted:` for everything else. If a filter-marked file's committed blob is plaintext (typically because it was staged before `.gitattributes` was in effect), a `*** WARNING ***` is appended and a summary at the end suggests running with `-f`. Untracked filter-marked files are listed without a warning (they have no blob yet) and are not auto-staged by `-f`.
+By default, status is focused on files governed by a git-crypt filter — for a large repo this is the actionable subset. Tracked **and** untracked filter-matched files are shown. Use `-a/--all` for the full `git-crypt`-style listing that also includes non-filter files.
 
-Works without `gitveil init` -- the command is informational and can be used to audit which files will be encrypted before initializing.
+When a filter-marked file's committed blob is plaintext (typically because it was staged before `.gitattributes` took effect), `*** WARNING ***` is appended to its line and a summary at the end suggests `gitveil status -f`. Untracked filter-marked files are listed without a warning (they have no blob yet).
+
+Works without `gitveil init` -- the command is informational and can be used to audit filter coverage before initializing. If filter-marked files were committed without init, status surfaces them as WARNINGs.
 
 Performance: at most one `git ls-files` per category, one batched `git check-attr`, and one batched `git cat-file` regardless of repo size. On a Unity project with ~4,000 files it completes in ~130 ms vs ~65 seconds for git-crypt -- roughly 500x faster.
 

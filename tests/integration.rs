@@ -246,18 +246,23 @@ fn test_status_shows_encrypted_files() {
     assert_success(&out, "status");
 
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // Files matching filter=git-crypt are listed under "encrypted:"
+    // Default output is focused on filter-marked files.
     assert!(
         stdout.contains("encrypted:") && stdout.contains("a.secret"),
         "should list a.secret as encrypted, got: {}",
         stdout
     );
     assert!(stdout.contains("b.secret"), "should list b.secret");
-    // Matches git-crypt: non-filter tracked files are listed as "not encrypted:"
+    // Non-filter files are NOT shown by default (use --all for that).
     assert!(
-        stdout.contains("not encrypted:") && stdout.contains("public.txt"),
-        "should list public.txt as not encrypted, got: {}",
-        stdout
+        !stdout.contains("public.txt"),
+        "default output should not list non-filter public.txt, got: {}",
+        stdout,
+    );
+    assert!(
+        !stdout.contains("README"),
+        "default output should not list non-filter README, got: {}",
+        stdout,
     );
 }
 
@@ -587,10 +592,10 @@ fn test_status_many_files_no_deadlock() {
         stdout.contains("secret-0199.txt"),
         "should list last encrypted file"
     );
-    // Plain files appear too (as "not encrypted:") — matches git-crypt
+    // Plain files (no filter) are excluded from the default focused output.
     assert!(
-        stdout.contains("plain-0000.txt"),
-        "should list plain files (matches git-crypt)"
+        !stdout.contains("plain-0000.txt"),
+        "default output should not list non-filter plain files"
     );
 }
 
@@ -780,7 +785,9 @@ fn test_status_shows_untracked_filter_matched_file() {
 }
 
 #[test]
-fn test_status_shows_untracked_non_filter_file() {
+fn test_status_default_hides_non_filter_files() {
+    // Default output is focused on filter-matched files. README (tracked,
+    // no filter) and plain.txt (untracked, no filter) should NOT appear.
     let dir = make_test_repo();
     assert_success(&gitveil(dir.path(), &["init"]), "init");
     fs::write(dir.path().join("plain.txt"), "public\n").unwrap();
@@ -789,24 +796,53 @@ fn test_status_shows_untracked_non_filter_file() {
     assert_success(&out, "status");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("not encrypted:") && stdout.contains("plain.txt"),
-        "untracked non-filter file should appear as not encrypted, got: {}",
+        !stdout.contains("plain.txt"),
+        "default should hide non-filter plain.txt, got: {}",
+        stdout,
+    );
+    assert!(
+        !stdout.contains("README"),
+        "default should hide non-filter README, got: {}",
         stdout,
     );
 }
 
 #[test]
-fn test_status_shows_tracked_non_filter_file() {
-    // README is tracked by make_test_repo() and has no filter.
+fn test_status_a_flag_lists_non_filter_files() {
+    // -a / --all surfaces files without the git-crypt filter, matching the
+    // git-crypt-style verbose listing.
     let dir = make_test_repo();
     assert_success(&gitveil(dir.path(), &["init"]), "init");
+    fs::write(dir.path().join("plain.txt"), "public\n").unwrap();
 
-    let out = gitveil(dir.path(), &["status"]);
-    assert_success(&out, "status");
+    let out = gitveil(dir.path(), &["status", "-a"]);
+    assert_success(&out, "status -a");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("not encrypted:") && stdout.contains("README"),
-        "tracked non-filter README should appear as not encrypted, got: {}",
+        stdout.contains("not encrypted:") && stdout.contains("plain.txt"),
+        "-a should list untracked non-filter plain.txt, got: {}",
+        stdout,
+    );
+    assert!(
+        stdout.contains("README"),
+        "-a should list tracked non-filter README, got: {}",
+        stdout,
+    );
+}
+
+#[test]
+fn test_status_a_long_flag_alias() {
+    // --all is the long alias for -a.
+    let dir = make_test_repo();
+    assert_success(&gitveil(dir.path(), &["init"]), "init");
+    fs::write(dir.path().join("plain.txt"), "public\n").unwrap();
+
+    let out = gitveil(dir.path(), &["status", "--all"]);
+    assert_success(&out, "status --all");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("plain.txt"),
+        "--all should behave like -a, got: {}",
         stdout,
     );
 }
@@ -885,64 +921,101 @@ fn test_status_no_warning_when_all_correctly_encrypted() {
 }
 
 #[test]
-fn test_status_e_flag_only_filter_matched_files() {
+fn test_status_e_flag_only_encrypted_blobs() {
+    // -e: only files whose blob is encrypted (i.e., everything is fine).
+    // WARNING files (filter + plaintext blob) are excluded.
     let dir = make_test_repo();
     assert_success(&gitveil(dir.path(), &["init"]), "init");
+
+    // bad.secret: committed plaintext before filter — its blob is plain.
+    fs::write(dir.path().join("bad.secret"), "plain\n").unwrap();
+    assert_success(&git(dir.path(), &["add", "bad.secret"]), "add bad");
+    assert_success(&git(dir.path(), &["commit", "-m", "pre"]), "commit");
+
     fs::write(
         dir.path().join(".gitattributes"),
         "*.secret filter=git-crypt diff=git-crypt\n",
     )
     .unwrap();
-    fs::write(dir.path().join("a.secret"), "secret\n").unwrap();
+    fs::write(dir.path().join("good.secret"), "encrypt-me\n").unwrap();
     fs::write(dir.path().join("public.txt"), "public\n").unwrap();
-    assert_success(&git(dir.path(), &["add", "."]), "git add");
+    // Use explicit paths: `git add .` would re-stage bad.secret through
+    // the now-active clean filter, accidentally erasing the WARNING state.
+    assert_success(
+        &git(
+            dir.path(),
+            &["add", ".gitattributes", "good.secret", "public.txt"],
+        ),
+        "git add new files only",
+    );
     assert_success(&git(dir.path(), &["commit", "-m", "add"]), "commit");
 
     let out = gitveil(dir.path(), &["status", "-e"]);
     assert_success(&out, "status -e");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("a.secret"),
-        "-e should list a.secret, got: {}",
+        stdout.contains("good.secret"),
+        "-e should list filter+encrypted good.secret, got: {}",
         stdout,
     );
     assert!(
-        !stdout.contains("public.txt"),
-        "-e should NOT list public.txt, got: {}",
+        !stdout.contains("bad.secret"),
+        "-e should NOT list filter+plaintext bad.secret (the WARNING set), got: {}",
         stdout,
     );
     assert!(
-        !stdout.contains("README"),
-        "-e should NOT list README, got: {}",
+        !stdout.contains("public.txt") && !stdout.contains("README"),
+        "-e should NOT list non-filter files, got: {}",
         stdout,
     );
 }
 
 #[test]
-fn test_status_u_flag_only_non_filter_files() {
+fn test_status_u_flag_only_warning_files() {
+    // -u: only files marked for encryption whose blob is plaintext (the
+    // set that needs re-encryption — pair with -f). Restores the
+    // pre-PR meaning of -u.
     let dir = make_test_repo();
     assert_success(&gitveil(dir.path(), &["init"]), "init");
+
+    fs::write(dir.path().join("bad.secret"), "plain\n").unwrap();
+    assert_success(&git(dir.path(), &["add", "bad.secret"]), "add bad");
+    assert_success(&git(dir.path(), &["commit", "-m", "pre"]), "commit");
+
     fs::write(
         dir.path().join(".gitattributes"),
         "*.secret filter=git-crypt diff=git-crypt\n",
     )
     .unwrap();
-    fs::write(dir.path().join("a.secret"), "secret\n").unwrap();
+    fs::write(dir.path().join("good.secret"), "encrypt-me\n").unwrap();
     fs::write(dir.path().join("public.txt"), "public\n").unwrap();
-    assert_success(&git(dir.path(), &["add", "."]), "git add");
+    // Use explicit paths: `git add .` would re-stage bad.secret through
+    // the now-active clean filter, accidentally erasing the WARNING state.
+    assert_success(
+        &git(
+            dir.path(),
+            &["add", ".gitattributes", "good.secret", "public.txt"],
+        ),
+        "git add new files only",
+    );
     assert_success(&git(dir.path(), &["commit", "-m", "add"]), "commit");
 
     let out = gitveil(dir.path(), &["status", "-u"]);
     assert_success(&out, "status -u");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("public.txt"),
-        "-u should list public.txt, got: {}",
+        stdout.contains("bad.secret") && stdout.contains("WARNING"),
+        "-u should list bad.secret as a WARNING (filter+plain), got: {}",
         stdout,
     );
     assert!(
-        !stdout.contains("a.secret"),
-        "-u should NOT list a.secret (it has filter), got: {}",
+        !stdout.contains("good.secret"),
+        "-u should NOT list good.secret (filter+encrypted), got: {}",
+        stdout,
+    );
+    assert!(
+        !stdout.contains("public.txt") && !stdout.contains("README"),
+        "-u should NOT list non-filter files, got: {}",
         stdout,
     );
 }
@@ -1051,7 +1124,8 @@ fn test_status_fix_skips_file_deleted_from_working_tree() {
 #[test]
 fn test_status_excludes_gitignored_files() {
     // --exclude-standard makes git ls-files --others skip files matched by
-    // .gitignore. Regression guard: nothing else accidentally surfaces them.
+    // .gitignore. Regression guard via -a (which would include them
+    // otherwise — they are non-filter files).
     let dir = make_test_repo();
     assert_success(&gitveil(dir.path(), &["init"]), "init");
 
@@ -1060,22 +1134,22 @@ fn test_status_excludes_gitignored_files() {
     fs::write(dir.path().join("draft.tmp"), "skip me\n").unwrap();
     fs::write(dir.path().join("public.txt"), "include me\n").unwrap();
 
-    let out = gitveil(dir.path(), &["status"]);
-    assert_success(&out, "status");
+    let out = gitveil(dir.path(), &["status", "-a"]);
+    assert_success(&out, "status -a");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("public.txt"),
-        "non-ignored file should appear, got: {}",
+        "non-ignored file should appear with -a, got: {}",
         stdout,
     );
     assert!(
         !stdout.contains("ignored.txt"),
-        "gitignored file should not appear, got: {}",
+        "gitignored file should not appear even with -a, got: {}",
         stdout,
     );
     assert!(
         !stdout.contains("draft.tmp"),
-        "gitignored pattern file should not appear, got: {}",
+        "gitignored pattern file should not appear even with -a, got: {}",
         stdout,
     );
 }
@@ -1099,7 +1173,9 @@ fn test_status_not_a_git_repo_clear_error() {
 #[test]
 fn test_status_works_without_gitveil_init() {
     // Status is informational: it lets users inspect filter coverage even
-    // before running `gitveil init`. Matches git-crypt's behavior.
+    // before running `gitveil init`. Without init, filter-marked files
+    // were committed without the clean filter, so their blobs are
+    // plaintext → WARNING fires, surfacing the misconfiguration.
     let dir = make_test_repo();
     fs::write(
         dir.path().join(".gitattributes"),
@@ -1107,38 +1183,45 @@ fn test_status_works_without_gitveil_init() {
     )
     .unwrap();
     fs::write(dir.path().join("file.secret"), "x\n").unwrap();
-    fs::write(dir.path().join("plain.txt"), "y\n").unwrap();
     assert_success(&git(dir.path(), &["add", "."]), "git add");
     assert_success(&git(dir.path(), &["commit", "-m", "add"]), "commit");
 
     let out = gitveil(dir.path(), &["status"]);
     assert_success(&out, "status before gitveil init must still work");
     let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stdout.contains("file.secret"),
-        "should list file.secret, got: {}",
+        stdout.contains("file.secret") && stdout.contains("WARNING"),
+        "without init, filter-marked file should appear with WARNING, \
+         got stdout: {}",
         stdout,
     );
     assert!(
-        stdout.contains("plain.txt"),
-        "should list plain.txt, got: {}",
-        stdout,
+        stderr.to_lowercase().contains("warning"),
+        "should print summary, got stderr: {}",
+        stderr,
     );
 }
 
 #[test]
 fn test_status_handles_filename_with_spaces() {
     // Regression guard: NUL-delimited parsing means filenames with
-    // whitespace are preserved as a single entry.
+    // whitespace are preserved as a single entry. Use a filter-matched
+    // file so it appears in the default focused output.
     let dir = make_test_repo();
     assert_success(&gitveil(dir.path(), &["init"]), "init");
-    fs::write(dir.path().join("file with space.txt"), "x\n").unwrap();
+    fs::write(
+        dir.path().join(".gitattributes"),
+        "*.secret filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("file with space.secret"), "x\n").unwrap();
 
     let out = gitveil(dir.path(), &["status"]);
     assert_success(&out, "status");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("file with space.txt"),
+        stdout.contains("file with space.secret"),
         "should list the file with spaces in one piece, got: {}",
         stdout,
     );
