@@ -301,7 +301,7 @@ gitveil status [-e] [-u] [-a | --all] [-f | --fix]
 
 By default, status is focused on files governed by a git-crypt filter — for a large repo this is the actionable subset. Tracked **and** untracked filter-matched files are shown. Use `-a/--all` for the full `git-crypt`-style listing that also includes non-filter files.
 
-When a filter-marked file's committed blob is plaintext (typically because it was staged before `.gitattributes` took effect), `*** WARNING ***` is appended to its line and a summary at the end suggests `gitveil status -f`. Untracked filter-marked files are listed without a warning (they have no blob yet).
+When a filter-marked file's committed blob is plaintext (typically because it was staged before `.gitattributes` took effect), `*** WARNING ***` is appended to its line and a summary at the end suggests `gitveil status -f`. Untracked filter-marked files appear with an `(untracked)` suffix to make it clear that the file on disk is still plaintext — it'll be encrypted on staging.
 
 Works without `gitveil init` -- the command is informational and can be used to audit filter coverage before initializing. If filter-marked files were committed without init, status surfaces them as WARNINGs.
 

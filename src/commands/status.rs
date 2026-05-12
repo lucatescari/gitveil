@@ -114,7 +114,20 @@ pub fn status(
                     );
                 }
             } else if show_encrypted_lines {
-                println!("    {} {}", "encrypted:".green(), file.path);
+                if file.tracked {
+                    println!("    {} {}", "encrypted:".green(), file.path);
+                } else {
+                    // Untracked filter file: there's no blob yet, so the
+                    // file on disk is still plaintext. The "(untracked)"
+                    // suffix makes it clear that the encrypted state is
+                    // prospective — it'll happen on staging.
+                    println!(
+                        "    {} {} {}",
+                        "encrypted:".green(),
+                        file.path,
+                        "(untracked)".dimmed(),
+                    );
+                }
             }
         } else if show_non_filter_lines {
             println!("not encrypted: {}", file.path);

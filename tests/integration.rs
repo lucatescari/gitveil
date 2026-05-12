@@ -759,6 +759,8 @@ fn test_lock_many_files_no_deadlock() {
 fn test_status_shows_untracked_filter_matched_file() {
     // gitveil status used to ignore untracked files entirely; git-crypt
     // shows them so the user sees what *will* be encrypted on staging.
+    // We annotate the entry with "(untracked)" so the user can tell the
+    // file isn't actually encrypted yet — it just *will be* on staging.
     let dir = make_test_repo();
     assert_success(&gitveil(dir.path(), &["init"]), "init");
     fs::write(
@@ -776,10 +778,47 @@ fn test_status_shows_untracked_filter_matched_file() {
         "untracked filter-matched file should appear as encrypted, got: {}",
         stdout,
     );
+    assert!(
+        stdout.contains("(untracked)"),
+        "untracked filter file must be marked '(untracked)' to distinguish \
+         it from a file whose committed blob is already encrypted, got: {}",
+        stdout,
+    );
     // Untracked: no blob to verify, so no WARNING.
     assert!(
         !stdout.contains("WARNING"),
         "untracked file should not produce a WARNING, got: {}",
+        stdout,
+    );
+}
+
+#[test]
+fn test_status_tracked_filter_file_has_no_untracked_marker() {
+    // Negative pairing for the (untracked) marker: a tracked filter file
+    // whose blob is encrypted must not be tagged "(untracked)".
+    let dir = make_test_repo();
+    assert_success(&gitveil(dir.path(), &["init"]), "init");
+    fs::write(
+        dir.path().join(".gitattributes"),
+        "*.secret filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("done.secret"), "fully encrypted\n").unwrap();
+    assert_success(&git(dir.path(), &["add", "."]), "git add");
+    assert_success(&git(dir.path(), &["commit", "-m", "add"]), "commit");
+
+    let out = gitveil(dir.path(), &["status"]);
+    assert_success(&out, "status");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("done.secret"),
+        "tracked file should appear, got: {}",
+        stdout,
+    );
+    assert!(
+        !stdout.contains("(untracked)"),
+        "tracked filter+encrypted file must not be tagged (untracked), \
+         got: {}",
         stdout,
     );
 }
