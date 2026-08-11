@@ -172,8 +172,19 @@ pub fn status(
                     );
                     continue;
                 }
+                // `--renormalize` is required, not cosmetic. A plain
+                // `git add` consults the stat cache first: the working file
+                // is byte-identical to what was committed, only
+                // `.gitattributes` changed, and git cannot see that from
+                // stat data. So it decides there is nothing to do, exits 0,
+                // and never invokes the clean filter — leaving the plaintext
+                // blob staged while we report success. It only appeared
+                // intermittently because git re-hashes "racily clean" files
+                // (mtime not strictly older than the index) as a safeguard.
+                // `--renormalize` re-applies the clean process to tracked
+                // files unconditionally, which is exactly the intent here.
                 let st = Command::new("git")
-                    .args(["add", "--"])
+                    .args(["add", "--renormalize", "--"])
                     .arg(file)
                     .status()
                     .map_err(|e| GitVeilError::Git(format!("failed to stage {}: {}", file, e)))?;

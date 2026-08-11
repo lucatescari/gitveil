@@ -20,10 +20,10 @@ jobs:
       - name: Build test binary once
         run: cargo test --test integration --no-run
 
-      - name: Run the flaky test until it fails (max 30 attempts)
+      - name: Run the flaky test until it fails (max 50 attempts)
         shell: bash
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 50); do
             echo "::group::attempt $i"
             if ! cargo test --test integration test_status_fix_restages_only_warning_files -- --exact --nocapture; then
               echo "::endgroup::"
@@ -32,4 +32,4 @@ jobs:
             fi
             echo "::endgroup::"
           done
-          echo "30/30 attempts passed — no reproduction this run"
+          echo "50/50 attempts passed — no reproduction this run"
