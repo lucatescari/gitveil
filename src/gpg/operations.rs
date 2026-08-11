@@ -66,7 +66,7 @@ pub fn gpg_get_fingerprints(user_id: &str) -> Result<Vec<String>, GitVeilError> 
 
 /// Validate that a GPG fingerprint is a hex string of expected length.
 /// Prevents path traversal and command injection via crafted fingerprints.
-fn validate_fingerprint(fingerprint: &str) -> Result<(), GitVeilError> {
+pub fn validate_fingerprint(fingerprint: &str) -> Result<(), GitVeilError> {
     if !fingerprint.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(GitVeilError::Gpg(format!(
             "invalid fingerprint (non-hex characters): {}",

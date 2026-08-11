@@ -77,6 +77,29 @@ fn gitveil_gpg(gpg_home: &Path, dir: &Path, args: &[&str]) -> Output {
         .unwrap_or_else(|e| panic!("failed to run gitveil {:?}: {}", args, e))
 }
 
+/// Run gitveil with a custom GNUPGHOME, feeding `input` to its stdin.
+/// Needed by the interactive key picker (`add-gpg-user --from <directory>`),
+/// which reads a selection from stdin.
+fn gitveil_gpg_stdin(gpg_home: &Path, dir: &Path, args: &[&str], input: &str) -> Output {
+    use std::io::Write;
+    let mut child = Command::new(gitveil_bin())
+        .args(args)
+        .current_dir(dir)
+        .env("GNUPGHOME", gpg_home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to spawn gitveil {:?}: {}", args, e));
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("gitveil failed")
+}
+
 /// Run git in a directory.
 fn git(dir: &Path, args: &[&str]) -> Output {
     Command::new("git")
@@ -962,5 +985,75 @@ fn test_gpg_unlock_rejects_key_dir_name_with_shell_metacharacters() {
     assert!(
         stderr.contains("invalid name"),
         "expected a diagnostic naming the rejected directory, got: {stderr}",
+    );
+}
+
+/// `add-gpg-user --from <git URL>` clones the keyring into a temp directory
+/// and runs the interactive picker over it. The branch had no coverage at
+/// all; it is also the consumer of `create_private_temp_dir`, so this pins
+/// the whole clone → scan → pick → import → add path.
+///
+/// A local path ending in `.git` satisfies `is_git_url`, so the clone stays
+/// offline.
+#[test]
+fn test_add_gpg_user_from_git_url() {
+    skip_without_gpg!();
+    let gpg_home = tempfile::tempdir().unwrap();
+    generate_test_key(gpg_home.path(), "Willow Test", "willow@gitveil.test");
+
+    // A keyring repository holding one exported public key.
+    let keyring_parent = tempfile::tempdir().unwrap();
+    let keyring = keyring_parent.path().join("keyring.git");
+    fs::create_dir(&keyring).unwrap();
+    assert_success(&git(&keyring, &["init"]), "git init keyring");
+    assert_success(
+        &git(&keyring, &["config", "user.email", "test@gitveil.test"]),
+        "keyring config email",
+    );
+    assert_success(
+        &git(&keyring, &["config", "user.name", "Test"]),
+        "keyring config name",
+    );
+    export_key_to_file(
+        gpg_home.path(),
+        "willow@gitveil.test",
+        &keyring.join("willow.asc"),
+    );
+    assert_success(&git(&keyring, &["add", "willow.asc"]), "keyring add");
+    assert_success(
+        &git(&keyring, &["commit", "-m", "add key"]),
+        "keyring commit",
+    );
+
+    let dir = make_initialized_repo(gpg_home.path());
+    let out = gitveil_gpg_stdin(
+        gpg_home.path(),
+        dir.path(),
+        &[
+            "add-gpg-user",
+            "--trusted",
+            "--from",
+            &keyring.to_string_lossy(),
+        ],
+        "all\n",
+    );
+    assert_success(&out, "add-gpg-user --from git URL");
+
+    assert_eq!(
+        count_gpg_files(dir.path(), "default"),
+        1,
+        "the cloned key should have been added as a collaborator"
+    );
+
+    // The clone is cleaned up, and never under the old guessable name.
+    let leftovers: Vec<_> = fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("gitveil-keyring-"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "temp clone directories left behind: {leftovers:?}"
     );
 }
