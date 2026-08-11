@@ -9,7 +9,7 @@ license = "GPL-3.0-only"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 aes = "0.8"
-ctr = "0.9"
+ctr = "0.10"
 cipher = { version = "0.4", features = ["std"] }
 hmac = "0.12"
 sha1 = "0.10"
