@@ -28,12 +28,18 @@ pub fn create_private_temp_dir(prefix: &str) -> io::Result<PathBuf> {
 /// Create one owner-only directory at exactly `path`, failing if anything is
 /// already there. Split out so the create-never-adopts rule is testable.
 fn create_private_temp_dir_at(path: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
+    // Built per-platform rather than mutated behind a `cfg`, which would
+    // leave an unused `mut` on non-unix targets.
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt;
+        let mut builder = fs::DirBuilder::new();
         builder.mode(0o700);
-    }
+        builder
+    };
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
+
     // Deliberately not `recursive(true)`: that would silently succeed on an
     // existing path, which is the behaviour this function exists to avoid.
     builder.create(path)
