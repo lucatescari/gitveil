@@ -11,7 +11,7 @@ use crate::git::repo::{
     find_git_dir, find_repo_root, get_encrypted_files, git_crypt_dir, key_path,
 };
 use crate::gpg::operations::{gpg_decrypt_from_file, gpg_list_secret_key_fingerprints};
-use crate::key::key_file::KeyFile;
+use crate::key::key_file::{validate_existing_key_name, KeyFile};
 
 /// Unlock the repository: load key, configure filters, and decrypt working copy.
 ///
@@ -76,6 +76,21 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
 
         for key_dir_entry in key_dirs {
             let key_name = key_dir_entry.file_name().to_string_lossy().to_string();
+
+            // This name is repository content. Unvalidated, it would flow
+            // into `git config filter.<name>.smudge`, which git executes
+            // through a shell — a crafted directory name in a cloned repo
+            // would run arbitrary code here. The name is escaped for display
+            // so it cannot smuggle terminal control sequences either.
+            if let Err(e) = validate_existing_key_name(&key_name) {
+                eprintln!(
+                    "{} ignoring key directory with invalid name \"{}\": {}",
+                    "warning:".yellow().bold(),
+                    key_name.escape_default(),
+                    e
+                );
+                continue;
+            }
 
             // Look for GPG files in the key's version directories
             let key_dir = key_dir_entry.path();

@@ -4,6 +4,9 @@ on:
   push:
     branches: [dev, master]
   pull_request:
+  schedule:
+    # Weekly, so newly published advisories are caught without a push.
+    - cron: "0 6 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
@@ -70,3 +73,29 @@ jobs:
 
       - name: Cross-compatibility tests
         run: cargo test --test cross_compat
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-audit binary
+        id: cache-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit
+
+      - name: Install cargo-audit
+        if: steps.cache-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        # Fails the build on known vulnerabilities. RustSec informational
+        # advisories (unsound / unmaintained) are reported as warnings only —
+        # Dependabot does not surface those at all, so the log is the record.
+        run: cargo audit

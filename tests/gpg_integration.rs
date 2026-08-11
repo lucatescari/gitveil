@@ -888,3 +888,79 @@ fn test_gpg_unlock_no_matching_secret_key_gives_clear_error() {
         stderr,
     );
 }
+
+// ─── Malicious Repository Content ──────────────────────────────
+
+/// Regression: repository content must never reach a git filter command.
+///
+/// `unlock` derives the key name from a directory name under
+/// `.git-crypt/keys/`, which is attacker-controlled repository content, and
+/// feeds it to `git config filter.<name>.smudge`. git runs those filter
+/// commands through a shell, so an unvalidated name is remote code execution
+/// on every collaborator who unlocks the repository.
+#[test]
+fn test_gpg_unlock_rejects_key_dir_name_with_shell_metacharacters() {
+    skip_without_gpg!();
+
+    // `${IFS}` supplies the argument separator without a literal space:
+    // the payload has to be valid both as a path component and as a
+    // .gitattributes attribute value.
+    const EVIL: &str = "x$(touch${IFS}pwned)";
+
+    let gpg_home = tempfile::tempdir().unwrap();
+    generate_test_key(gpg_home.path(), "Vic Test", "vic-evil@gitveil.test");
+    let dir = make_initialized_repo(gpg_home.path());
+
+    // The victim is a legitimate collaborator, so the .gpg file really does
+    // decrypt with their secret key.
+    assert_success(
+        &gitveil_gpg(
+            gpg_home.path(),
+            dir.path(),
+            &["add-gpg-user", "--trusted", "vic-evil@gitveil.test"],
+        ),
+        "add-gpg-user",
+    );
+
+    // Attacker-supplied repository content: a key directory whose name is a
+    // shell payload, plus a file routed through the matching filter so that
+    // unlock's `git checkout` triggers it.
+    let keys_dir = dir.path().join(".git-crypt").join("keys");
+    fs::rename(keys_dir.join("default"), keys_dir.join(EVIL))
+        .expect("rename key dir to payload name");
+    fs::write(
+        dir.path().join(".gitattributes"),
+        format!("*.secret filter=git-crypt-{EVIL} diff=git-crypt-{EVIL}\n"),
+    )
+    .unwrap();
+    fs::write(dir.path().join("data.secret"), "secret\n").unwrap();
+    assert_success(&git(dir.path(), &["add", "-A"]), "git add payload");
+    assert_success(
+        &git(dir.path(), &["commit", "-m", "attacker payload"]),
+        "git commit payload",
+    );
+
+    let out = gitveil_gpg(gpg_home.path(), dir.path(), &["unlock"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        !dir.path().join("pwned").exists(),
+        "REMOTE CODE EXECUTION: the key directory name was executed by git.\nstderr: {stderr}",
+    );
+
+    let cfg = git(dir.path(), &["config", "--get-regexp", "^filter\\."]);
+    let cfg = String::from_utf8_lossy(&cfg.stdout);
+    assert!(
+        !cfg.contains("$("),
+        "poisoned filter command written to git config:\n{cfg}",
+    );
+
+    assert!(
+        !out.status.success(),
+        "unlock must not report success when the only key directory is unusable",
+    );
+    assert!(
+        stderr.contains("invalid name"),
+        "expected a diagnostic naming the rejected directory, got: {stderr}",
+    );
+}

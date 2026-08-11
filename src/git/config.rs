@@ -2,6 +2,7 @@ use std::process::Command;
 
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
+use crate::key::key_file::validate_existing_key_name;
 
 /// Get a git config value. Returns None if not set.
 pub fn get_git_config(name: &str) -> Result<Option<String>, GitVeilError> {
@@ -63,6 +64,11 @@ fn filter_name(key_name: &str) -> String {
 /// Configure git clean/smudge/diff filters for a key.
 /// Uses the gitveil binary path so git invokes the correct executable.
 pub fn configure_filters(key_name: &str) -> Result<(), GitVeilError> {
+    // The key name ends up inside a filter command that git executes through
+    // a shell, so it must be validated before anything is written — even
+    // when it came from a directory listing rather than the command line.
+    validate_existing_key_name(key_name)?;
+
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "gitveil".to_string());
@@ -94,6 +100,8 @@ pub fn configure_filters(key_name: &str) -> Result<(), GitVeilError> {
 
 /// Remove git clean/smudge/diff filter configuration for a key.
 pub fn deconfigure_filters(key_name: &str) -> Result<(), GitVeilError> {
+    validate_existing_key_name(key_name)?;
+
     let name = filter_name(key_name);
 
     unset_git_config(&format!("filter.{name}.smudge"))?;
@@ -102,4 +110,33 @@ pub fn deconfigure_filters(key_name: &str) -> Result<(), GitVeilError> {
     unset_git_config(&format!("diff.{name}.textconv"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// git runs `filter.<name>.smudge` through a shell, so a key name
+    /// carrying shell metacharacters must be rejected before any git config
+    /// is written. Validation happens before git is invoked, so this test
+    /// does not need a repository.
+    #[test]
+    fn configure_filters_rejects_shell_metacharacters() {
+        let err = configure_filters("evil$(touch pwned)")
+            .expect_err("key name with shell metacharacters must be rejected");
+        assert!(
+            matches!(err, GitVeilError::InvalidKeyName(_)),
+            "expected InvalidKeyName, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn deconfigure_filters_rejects_shell_metacharacters() {
+        let err = deconfigure_filters("evil$(touch pwned)")
+            .expect_err("key name with shell metacharacters must be rejected");
+        assert!(
+            matches!(err, GitVeilError::InvalidKeyName(_)),
+            "expected InvalidKeyName, got: {err:?}"
+        );
+    }
 }

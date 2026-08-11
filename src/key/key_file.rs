@@ -222,7 +222,24 @@ impl KeyFile {
     }
 }
 
-/// Validate a key name.
+/// Validate a key name that was read back from the filesystem or from
+/// repository content — a directory under `.git-crypt/keys/`, a key file
+/// under `.git/git-crypt/keys/`.
+///
+/// Unlike [`validate_key_name`] this accepts `default`, which is the on-disk
+/// name of the default key. Every other rule is identical, and the character
+/// set is the security boundary: a key name is interpolated into filesystem
+/// paths and into `filter.<name>.smudge` git config values, and git runs
+/// those filter commands through a shell.
+pub fn validate_existing_key_name(name: &str) -> Result<(), GitVeilError> {
+    if name == DEFAULT_KEY_NAME {
+        return Ok(());
+    }
+    validate_key_name(name)
+}
+
+/// Validate a key name for a *new* named key. Rejects `default`, which is
+/// reserved for the implicit default key.
 fn validate_key_name(name: &str) -> Result<(), GitVeilError> {
     if name.is_empty() {
         return Err(GitVeilError::InvalidKeyName(
@@ -305,6 +322,42 @@ mod tests {
         assert!(validate_key_name("my-key").is_ok());
         assert!(validate_key_name("KEY_2").is_ok());
         assert!(validate_key_name("test123").is_ok());
+    }
+
+    /// `default` is the on-disk name of the default key, so a name read back
+    /// from the filesystem or a repository must accept it — unlike
+    /// `validate_key_name`, which rejects it as a name for a *new* named key.
+    #[test]
+    fn test_existing_key_name_accepts_default() {
+        assert!(validate_existing_key_name(DEFAULT_KEY_NAME).is_ok());
+        assert!(validate_existing_key_name("my-key").is_ok());
+    }
+
+    /// Regression: a key name is interpolated into `filter.<name>.smudge`
+    /// git config values, which git executes through a shell. Names carrying
+    /// shell metacharacters must never survive validation.
+    #[test]
+    fn test_existing_key_name_rejects_shell_metacharacters() {
+        for evil in [
+            "evil$(touch pwned)",
+            "evil`id`",
+            "evil;id",
+            "evil|id",
+            "evil&id",
+            "evil\"quoted",
+            "evil'quoted",
+            "evil name",
+            "evil\nnewline",
+            "..",
+            "../escape",
+            "",
+        ] {
+            assert!(
+                validate_existing_key_name(evil).is_err(),
+                "key name {:?} must be rejected",
+                evil
+            );
+        }
     }
 
     #[test]
