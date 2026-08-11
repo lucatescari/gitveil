@@ -25,9 +25,10 @@ cargo build
 cargo test
 ```
 
-All 132 tests should pass (52 unit + 56 integration + 18 GPG integration + 6 cross-compatibility). They cover:
+All 136 tests should pass (56 unit + 56 integration + 18 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors (RFC 2202)
+- Randomness: buffer fully filled, successive draws differ, empty buffer is a no-op (unit)
 - Clean-filter known-answer vector captured from git-crypt 0.8.0, so byte
   compatibility is guarded on every platform even where git-crypt is not
   installed and `cross_compat.rs` skips (unit)
@@ -77,7 +78,7 @@ cargo run -- status
 
 ```
 src/
-  crypto/       Core cryptography (AES-CTR, HMAC-SHA1, random)
+  crypto/       Core cryptography (AES-CTR, HMAC-SHA1, OS randomness via getrandom)
   key/          Key file format (TLV serialization, entries, key container)
   filter/       Git clean/smudge/diff filters
   commands/     User-facing commands (init, lock, unlock, status, export-key,
@@ -134,7 +135,9 @@ This is the most important constraint. Gitveil must remain **byte-compatible** w
 
 - Key material (`aes_key`, `hmac_key`) must be zeroized on drop. The `KeyEntry` struct derives `ZeroizeOnDrop`.
 - Never log or print key material, even in debug builds
-- Use `rand::rngs::OsRng` for all random generation (not thread-local or seeded RNGs)
+- Use `crate::crypto::random::generate_random_bytes` for all random generation. It draws
+  straight from the OS CSPRNG via `getrandom`; there is deliberately no userspace PRNG in the
+  dependency graph, so never introduce a seeded or thread-local generator
 
 ### Adding a New Command
 

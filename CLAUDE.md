@@ -37,7 +37,7 @@ This project must remain byte-compatible with git-crypt. Never change:
 
 - Key material must be zeroized on drop (ZeroizeOnDrop)
 - Never log or print key bytes
-- Use OsRng for all randomness
+- Use `crypto::random::generate_random_bytes` (OS CSPRNG via `getrandom`) for all randomness; no userspace PRNG
 - Validate all external input (fingerprints, key names, paths)
 - Skip symlinks in directory traversal
 
