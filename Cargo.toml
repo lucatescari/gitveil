@@ -4,6 +4,12 @@ version = "1.3.4"
 edition = "2021"
 description = "Transparent file encryption in git (git-crypt compatible)"
 license = "GPL-3.0-only"
+repository = "https://github.com/lucatescari/gitveil"
+homepage = "https://github.com/lucatescari/gitveil"
+readme = "README.md"
+keywords = ["git", "encryption", "git-crypt", "gpg", "secrets"]
+categories = ["command-line-utilities", "cryptography"]
+exclude = ["/benchmark", "/docs", "/scripts", "/.github", "/gitveil.svg", "/CLAUDE.md"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
