@@ -6,8 +6,26 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      # Patch/minor bumps land as one PR; majors stay separate so breaking
-      # changes to the crypto stack get reviewed on their own.
+      # The RustCrypto crates share the `cipher` / `digest` trait
+      # generations and can only move together — bumping one alone leaves
+      # two incompatible generations in the graph and fails to compile.
+      # Majors are included deliberately: separate major PRs are dead on
+      # arrival. Listed first because the first matching group wins.
+      rustcrypto:
+        patterns:
+          - aes
+          - ctr
+          - cipher
+          - hmac
+          - sha1
+          - digest
+          - crypto-common
+        update-types:
+          - major
+          - minor
+          - patch
+      # Everything else: patch/minor together, majors on their own so
+      # breaking changes get reviewed individually.
       minor-and-patch:
         update-types:
           - minor

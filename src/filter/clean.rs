@@ -101,4 +101,65 @@ mod tests {
 
         assert_eq!(decrypted, plaintext);
     }
+
+    /// Known-answer test anchored on **git-crypt 0.8.0**.
+    ///
+    /// The expected bytes were produced by running `git-crypt clean` with
+    /// this exact key and plaintext — not by this implementation — so the
+    /// vector remains a genuine cross-tool anchor. Unlike `cross_compat.rs`
+    /// it needs no git-crypt installation, so it guards byte compatibility
+    /// on every platform, including Windows.
+    ///
+    /// If this test fails, the on-disk format has changed and existing
+    /// repositories can no longer be read by git-crypt.
+    #[test]
+    fn test_clean_matches_git_crypt_known_answer() {
+        // git-crypt key file: format 2, entry version 0,
+        // AES key = 0xAA * 32, HMAC key = 0xBB * 64.
+        let mut key_bytes: Vec<u8> = Vec::new();
+        key_bytes.extend_from_slice(b"\x00GITCRYPTKEY");
+        key_bytes.extend_from_slice(&2u32.to_be_bytes());
+        key_bytes.extend_from_slice(&0u32.to_be_bytes());
+        key_bytes.extend_from_slice(&1u32.to_be_bytes());
+        key_bytes.extend_from_slice(&4u32.to_be_bytes());
+        key_bytes.extend_from_slice(&0u32.to_be_bytes());
+        key_bytes.extend_from_slice(&3u32.to_be_bytes());
+        key_bytes.extend_from_slice(&32u32.to_be_bytes());
+        key_bytes.extend_from_slice(&[0xAAu8; 32]);
+        key_bytes.extend_from_slice(&5u32.to_be_bytes());
+        key_bytes.extend_from_slice(&64u32.to_be_bytes());
+        key_bytes.extend_from_slice(&[0xBBu8; 64]);
+        key_bytes.extend_from_slice(&0u32.to_be_bytes());
+
+        let kf = KeyFile::load(&mut Cursor::new(&key_bytes)).expect("load git-crypt key");
+
+        let mut out = Vec::new();
+        clean(
+            &mut Cursor::new(b"gitveil known-answer test\n".as_slice()),
+            &mut out,
+            &kf,
+        )
+        .unwrap();
+
+        // `git-crypt clean < plaintext` with the key above, git-crypt 0.8.0.
+        const GIT_CRYPT_OUTPUT: &str = "0047495443525950540\
+                                        09eabeb896520896b76251cdcef1701aa\
+                                        abe96c4693e203e90512fb9cf31355dd933ace404701";
+        let expected: Vec<u8> = {
+            let hex: String = GIT_CRYPT_OUTPUT
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect()
+        };
+
+        assert_eq!(
+            out, expected,
+            "clean filter output diverged from git-crypt 0.8.0 — the on-disk \
+             format changed and existing repositories would break"
+        );
+    }
 }
