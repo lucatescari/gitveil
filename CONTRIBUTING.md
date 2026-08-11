@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 136 tests should pass (56 unit + 56 integration + 18 GPG integration + 6 cross-compatibility). They cover:
+All 137 tests should pass (56 unit + 56 integration + 19 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors (RFC 2202)
 - Randomness: buffer fully filled, successive draws differ, empty buffer is a no-op (unit)
@@ -52,7 +52,7 @@ All 136 tests should pass (56 unit + 56 integration + 18 GPG integration + 6 cro
 - GPG colon-output parsing: uid/fingerprint extraction, fingerprint validation, missing-field handling (unit)
 - GPG add-gpg-user: by email, fingerprint, --trusted, --no-commit, -k, --from file (GPG integration)
 - GPG rm-gpg-user: remove, --no-commit, user not found (GPG integration)
-- GPG ls-gpg-users: list, no users, named key (GPG integration)
+- GPG ls-gpg-users: list, no users, named key, honours `gpg.program` (GPG integration)
 - GPG unlock roundtrip: add user, lock, unlock via GPG (GPG integration)
 - GPG unlock with passphrase-protected key (pinentry/loopback) (GPG integration)
 - GPG unlock clear error when no secret key matches any collaborator (GPG integration)

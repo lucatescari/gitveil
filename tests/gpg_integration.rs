@@ -1057,3 +1057,55 @@ fn test_add_gpg_user_from_git_url() {
         "temp clone directories left behind: {leftovers:?}"
     );
 }
+
+/// Regression: every GPG invocation must go through `gpg.program`.
+///
+/// `ls-gpg-users` resolved fingerprints to user IDs with a hardcoded
+/// `gpg`, so anyone whose gpg lives elsewhere (a wrapper, `gpg2`, a
+/// non-PATH install) saw "(not in local keyring)" for collaborators who
+/// were perfectly well known to their real keyring.
+#[test]
+fn test_ls_gpg_users_honours_gpg_program_config() {
+    skip_without_gpg!();
+    let gpg_home = tempfile::tempdir().unwrap();
+    generate_test_key(gpg_home.path(), "Quinn Test", "quinn@gitveil.test");
+    let dir = make_initialized_repo(gpg_home.path());
+    assert_success(
+        &gitveil_gpg(
+            gpg_home.path(),
+            dir.path(),
+            &["add-gpg-user", "--trusted", "quinn@gitveil.test"],
+        ),
+        "add-gpg-user",
+    );
+
+    // Baseline: with the default gpg, the UID resolves.
+    let out = gitveil_gpg(gpg_home.path(), dir.path(), &["ls-gpg-users"]);
+    assert_success(&out, "ls-gpg-users baseline");
+    let baseline = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        baseline.contains("quinn@gitveil.test"),
+        "baseline: UID should resolve, got: {baseline}"
+    );
+
+    // Point gpg.program at a binary that does not exist. Every GPG call has
+    // to route through it, so the UID must no longer resolve.
+    assert_success(
+        &git(
+            dir.path(),
+            &["config", "gpg.program", "gitveil-no-such-gpg-binary"],
+        ),
+        "set gpg.program",
+    );
+
+    let out = gitveil_gpg(gpg_home.path(), dir.path(), &["ls-gpg-users"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("quinn@gitveil.test"),
+        "ls-gpg-users bypassed gpg.program and called the system gpg directly, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("not in local keyring"),
+        "expected the fingerprint to be left unresolved, got: {stdout}"
+    );
+}
