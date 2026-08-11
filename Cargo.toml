@@ -11,7 +11,7 @@ clap_complete = "4"
 aes = "0.8"
 ctr = "0.9"
 cipher = { version = "0.4", features = ["std"] }
-hmac = "0.12"
+hmac = "0.13"
 sha1 = "0.10"
 rand = "0.8"
 thiserror = "2"
