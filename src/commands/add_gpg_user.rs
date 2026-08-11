@@ -7,9 +7,11 @@ use crate::config;
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::repo::{find_git_dir, find_repo_root, git_crypt_dir, key_path};
+use crate::gpg::display::sanitize_for_display;
 use crate::gpg::import::{import_key_file, pick_keys, preview_key_file, scan_key_directory};
 use crate::gpg::operations::{gpg_encrypt_to_file, gpg_get_fingerprints};
 use crate::key::key_file::KeyFile;
+use crate::tempdir::create_private_temp_dir;
 
 /// Add a GPG user as a collaborator who can unlock the repository.
 ///
@@ -100,7 +102,11 @@ fn add_from_git_url(
 ) -> Result<(), GitVeilError> {
     eprintln!("{} {}...", "Cloning".cyan().bold(), url.dimmed());
 
-    let tmp_dir = std::env::temp_dir().join(format!("gitveil-keyring-{}", std::process::id()));
+    // Unpredictable, owner-only, and never adopted from an existing path:
+    // the clone lands in a world-writable temp directory and its contents
+    // decide who gets added as a collaborator.
+    let tmp_dir = create_private_temp_dir("gitveil-keyring")
+        .map_err(|e| GitVeilError::Git(format!("failed to create temp directory: {}", e)))?;
 
     let status = Command::new("git")
         .args(["clone", "--depth", "1", "--", url])
@@ -137,7 +143,7 @@ fn add_from_path(
         eprintln!(
             "{} key: {} ({})",
             "Importing".cyan().bold(),
-            info.uid.bold(),
+            sanitize_for_display(&info.uid).bold(),
             info.fingerprint.dimmed()
         );
         import_key_file(from_path)?;
@@ -160,7 +166,7 @@ fn add_from_path(
             eprintln!(
                 "{} key: {} ({})",
                 "Importing".cyan().bold(),
-                info.uid.bold(),
+                sanitize_for_display(&info.uid).bold(),
                 info.fingerprint.dimmed()
             );
             import_key_file(&info.path)?;
@@ -251,12 +257,9 @@ fn add_by_fingerprint(
             return Err(GitVeilError::Git("failed to stage GPG key files".into()));
         }
 
-        // Sanitize display name: replace control characters to prevent
-        // injection of extra lines into the commit message.
-        let safe_name: String = display_name
-            .chars()
-            .map(|c| if c.is_control() { '_' } else { c })
-            .collect();
+        // Same helper as the terminal output: control characters would
+        // otherwise inject extra lines into the commit message.
+        let safe_name = sanitize_for_display(display_name);
 
         let commit_msg = format!(
             "Add {} as gitveil collaborator\n\nKey: {}\nFingerprint: {}",
@@ -278,7 +281,7 @@ fn add_by_fingerprint(
     eprintln!(
         "{} GPG user {} (fingerprint: {}) for key '{}'.",
         "Added".green().bold(),
-        display_name.bold(),
+        sanitize_for_display(display_name).bold(),
         if fingerprint.len() >= 16 {
             &fingerprint[..16]
         } else {

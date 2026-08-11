@@ -8,6 +8,7 @@ mod filter;
 mod git;
 mod gpg;
 mod key;
+mod tempdir;
 
 use std::io;
 use std::path::PathBuf;

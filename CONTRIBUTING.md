@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 117 tests should pass (38 unit + 56 integration + 17 GPG integration + 6 cross-compatibility). They cover:
+All 131 tests should pass (51 unit + 56 integration + 18 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors
 - Key file TLV serialization/deserialization
@@ -43,6 +43,9 @@ All 117 tests should pass (38 unit + 56 integration + 17 GPG integration + 6 cro
 - Config CLI: set-keyring, unset-keyring, show, overwrite, canonicalization, symlinks (integration)
 - Keyring fallback: add-gpg-user with no args, empty dir, deleted dir, precedence (integration)
 - Scan security: symlink skipping, non-key extensions, empty directory (integration)
+- Temp directories: unpredictable names, owner-only mode, never adopting an existing path (unit)
+- Untrusted display strings: terminal escape sequences and newlines stripped from GPG user IDs (unit)
+- GPG colon-output parsing: uid/fingerprint extraction, fingerprint validation, missing-field handling (unit)
 - GPG add-gpg-user: by email, fingerprint, --trusted, --no-commit, -k, --from file (GPG integration)
 - GPG rm-gpg-user: remove, --no-commit, user not found (GPG integration)
 - GPG ls-gpg-users: list, no users, named key (GPG integration)
@@ -77,10 +80,12 @@ src/
   commands/     User-facing commands (init, lock, unlock, status, export-key,
                 add/rm/ls-gpg-users, config)
   git/          Git repository helpers (config, checkout, repo inspection)
-  gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI)
+  gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI,
+                sanitizing untrusted user IDs for display)
   cli.rs        clap CLI definitions + shell completion generation
   config.rs     Global configuration (XDG keyring path)
   constants.rs  Shared constants (magic bytes, sizes, field IDs)
+  tempdir.rs    Unpredictable, owner-only temp directory creation
   error.rs      Error types
   main.rs       Entry point
 tests/
@@ -94,7 +99,8 @@ benchmark/
 scripts/
   release.sh      Automated release + Homebrew formula update
 .github/
-  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test)
+  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test, cargo audit)
+  dependabot.yml    Weekly cargo + github-actions dependency updates
 ```
 
 ## Development Guidelines
