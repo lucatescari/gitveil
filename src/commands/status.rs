@@ -172,9 +172,7 @@ pub fn status(
                     );
                     continue;
                 }
-                let st = Command::new("git")
-                    .args(["add", "--"])
-                    .arg(file)
+                let st = build_restage_command(file)
                     .status()
                     .map_err(|e| GitVeilError::Git(format!("failed to stage {}: {}", file, e)))?;
                 if !st.success() {
@@ -195,6 +193,28 @@ pub fn status(
     }
 
     Ok(())
+}
+
+/// Build the `git add` invocation used by `status -f` to re-stage a file
+/// whose committed blob is still plaintext.
+///
+/// `--renormalize` is required, not cosmetic. A plain `git add` consults the
+/// stat cache first: the working file is byte-identical to what was
+/// committed — only `.gitattributes` changed, which git cannot see from stat
+/// data — so it concludes there is nothing to do, exits 0, and never invokes
+/// the clean filter. The plaintext blob stays staged while `-f` reports
+/// success, which is a false assurance about the very thing the command
+/// exists to fix. It surfaced only intermittently because git re-hashes
+/// "racily clean" files (mtime not strictly older than the index) as a
+/// safeguard, masking it most of the time.
+///
+/// `--renormalize` re-applies the clean process to tracked files
+/// unconditionally. It does not stage untracked files, so `-f` still refuses
+/// to auto-add them.
+fn build_restage_command(file: &str) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.args(["add", "--renormalize", "--"]).arg(file);
+    cmd
 }
 
 /// True when the file's filter attribute is a gitveil/git-crypt filter.
@@ -397,6 +417,29 @@ fn drain_bytes(reader: &mut impl Read, count: usize) -> Result<(), GitVeilError>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: `-f` must re-apply the clean filter unconditionally.
+    /// Without `--renormalize`, git's stat cache makes `git add` a silent
+    /// no-op when only `.gitattributes` changed, leaving the plaintext blob
+    /// staged while `-f` reports success. Confirmed on Windows CI, where it
+    /// reproduced once in 20 runs.
+    #[test]
+    fn restage_command_uses_renormalize() {
+        let cmd = build_restage_command("secret.txt");
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(
+            args.iter().any(|a| a == "--renormalize"),
+            "re-staging must use --renormalize or the clean filter is skipped \
+             when only .gitattributes changed. Args: {args:?}",
+        );
+        assert!(
+            args.iter().any(|a| a == "secret.txt"),
+            "re-staging must name the file. Args: {args:?}",
+        );
+    }
 
     #[test]
     fn has_git_crypt_filter_recognizes_default_and_named() {

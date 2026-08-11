@@ -1096,12 +1096,38 @@ fn test_status_fix_restages_only_warning_files() {
          gitveil status -f stderr:\n{}\n\
          git diff --cached --name-only stdout: {:?}\n\
          git diff --cached --name-only stderr: {:?}\n\
-         git status --porcelain:\n{}",
+         git status --porcelain:\n{}\n\
+         --- discriminating evidence ---\n\
+         index entry (git ls-files -s):   {}\
+         HEAD blob  (rev-parse HEAD:..):  {}\
+         index blob first bytes:          {:?}\n\
+         git check-attr filter bad.secret: {}\
+         filter.git-crypt.clean:          {}\
+         filter.git-crypt.required:       {}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
         staged_out,
         String::from_utf8_lossy(&staged.stderr),
         String::from_utf8_lossy(&git(dir.path(), &["status", "--porcelain"]).stdout),
+        String::from_utf8_lossy(&git(dir.path(), &["ls-files", "-s", "bad.secret"]).stdout),
+        String::from_utf8_lossy(&git(dir.path(), &["rev-parse", "HEAD:bad.secret"]).stdout),
+        git(dir.path(), &["show", ":bad.secret"])
+            .stdout
+            .iter()
+            .take(10)
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
+        String::from_utf8_lossy(&git(dir.path(), &["check-attr", "filter", "bad.secret"]).stdout),
+        String::from_utf8_lossy(
+            &git(dir.path(), &["config", "--get", "filter.git-crypt.clean"]).stdout
+        ),
+        String::from_utf8_lossy(
+            &git(
+                dir.path(),
+                &["config", "--get", "filter.git-crypt.required"]
+            )
+            .stdout
+        ),
     );
     assert!(
         !staged_out.contains("new.secret"),

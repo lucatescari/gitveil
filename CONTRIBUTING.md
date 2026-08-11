@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 137 tests should pass (56 unit + 56 integration + 19 GPG integration + 6 cross-compatibility). They cover:
+All 138 tests should pass (57 unit + 56 integration + 19 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors (RFC 2202)
 - Randomness: buffer fully filled, successive draws differ, empty buffer is a no-op (unit)
