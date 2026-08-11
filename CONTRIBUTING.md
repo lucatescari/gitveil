@@ -25,9 +25,12 @@ cargo build
 cargo test
 ```
 
-All 131 tests should pass (51 unit + 56 integration + 18 GPG integration + 6 cross-compatibility). They cover:
+All 132 tests should pass (52 unit + 56 integration + 18 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
-- HMAC-SHA1 known-answer vectors
+- HMAC-SHA1 known-answer vectors (RFC 2202)
+- Clean-filter known-answer vector captured from git-crypt 0.8.0, so byte
+  compatibility is guarded on every platform even where git-crypt is not
+  installed and `cross_compat.rs` skips (unit)
 - Key file TLV serialization/deserialization
 - Clean/smudge/diff filter round-trips
 - Non-encrypted passthrough behavior
