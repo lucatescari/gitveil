@@ -5,6 +5,7 @@ use colored::Colorize;
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::repo::{find_repo_root, git_crypt_dir};
+use crate::gpg::operations::get_gpg_program;
 
 /// List GPG users who have been granted access to the repository.
 /// Scans .git-crypt/keys/<keyname>/0/ for .gpg files and resolves
@@ -136,7 +137,8 @@ fn list_users_for_key(keys_dir: &Path, key_name: &str) -> Result<(), GitVeilErro
 
 /// Try to resolve a GPG fingerprint to a UID (name + email).
 fn resolve_gpg_uid(fingerprint: &str) -> Option<String> {
-    let output = std::process::Command::new("gpg")
+    // Must honour `git config gpg.program`, like every other GPG call.
+    let output = std::process::Command::new(get_gpg_program())
         .args([
             "--with-colons",
             "--batch",
