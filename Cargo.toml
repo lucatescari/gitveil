@@ -13,7 +13,7 @@ ctr = "0.10"
 cipher = "0.5"
 hmac = "0.13"
 sha1 = "0.11"
-rand = "0.8"
+rand = "0.10"
 thiserror = "2"
 byteorder = "1"
 zeroize = { version = "1", features = ["derive"] }
