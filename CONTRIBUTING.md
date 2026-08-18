@@ -103,8 +103,9 @@ benchmark/
 scripts/
   release.sh      Automated release + Homebrew formula update
 .github/
-  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test, cargo audit)
+  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test, cargo audit, cargo deny)
   dependabot.yml    Weekly cargo + github-actions dependency updates
+deny.toml           cargo-deny policy (licenses, duplicate versions, sources)
 ```
 
 ## Development Guidelines
@@ -114,6 +115,23 @@ scripts/
 - Run `cargo fmt` before committing
 - Run `cargo clippy` and fix any warnings
 - Follow standard Rust naming conventions
+
+### Dependencies
+
+CI enforces a dependency policy on top of the test suite. Both tools are
+optional locally (`cargo install cargo-audit cargo-deny --locked`), but a PR
+that trips either one will fail:
+
+- `cargo audit` fails on known RustSec vulnerabilities. Informational
+  advisories (unsound / unmaintained) are reported as warnings only.
+- `cargo deny check licenses bans sources` enforces `deny.toml`: dependency
+  licenses must be compatible with GPL-3.0-only, no crate may appear at two
+  versions, and every dependency must resolve to crates.io. The `advisories`
+  check is deliberately left to `cargo audit` rather than run twice.
+
+A duplicate-version failure matters most for the RustCrypto crates — two
+generations of the `cipher` / `digest` traits in one graph will not compile.
+That is why `.github/dependabot.yml` groups them into a single PR.
 
 ### Compatibility
 
@@ -157,7 +175,7 @@ This is the most important constraint. Gitveil must remain **byte-compatible** w
 1. Fork the repository
 2. Create a feature branch (`git checkout -b my-feature`)
 3. Make your changes
-4. Run `cargo fmt && cargo clippy && cargo test`
+4. Run `cargo fmt && cargo clippy && cargo test` (and `cargo deny check licenses bans sources` if you changed dependencies)
 5. Commit with a clear message
 6. Open a pull request
 

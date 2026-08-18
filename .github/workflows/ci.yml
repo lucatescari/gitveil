@@ -99,3 +99,31 @@ jobs:
         # advisories (unsound / unmaintained) are reported as warnings only —
         # Dependabot does not surface those at all, so the log is the record.
         run: cargo audit
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-deny binary
+        id: cache-deny
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny
+
+      - name: Install cargo-deny
+        if: steps.cache-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked
+
+      - name: Check licenses, bans and sources
+        # `advisories` is intentionally omitted — the cargo audit job above
+        # already covers RustSec. This job guards the other three: license
+        # compatibility with GPL-3.0-only, duplicate crate versions (a second
+        # crypto trait generation in the graph), and dependencies resolving to
+        # anything other than crates.io.
+        run: cargo deny check licenses bans sources
