@@ -4,6 +4,14 @@ on:
   push:
     branches: [dev, master]
   pull_request:
+  schedule:
+    # Weekly, so newly published advisories are caught without a push.
+    - cron: "0 6 * * 1"
+
+# Least privilege: every job here only reads the repo. Nothing publishes
+# releases, pushes tags or comments on PRs, so no job widens this.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,15 +26,19 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        # SHA-pinned to the `v1` tag, which tracks master where `toolchain` has
+        # no default — so it must be named explicitly. The old `@stable` ref was
+        # a branch whose action.yml defaulted it for us.
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache cargo registry & build
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -70,3 +82,61 @@ jobs:
 
       - name: Cross-compatibility tests
         run: cargo test --test cross_compat
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo-audit binary
+        id: cache-audit
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit
+
+      - name: Install cargo-audit
+        if: steps.cache-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        # Fails the build on known vulnerabilities. RustSec informational
+        # advisories (unsound / unmaintained) are reported as warnings only —
+        # Dependabot does not surface those at all, so the log is the record.
+        run: cargo audit
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo-deny binary
+        id: cache-deny
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny
+
+      - name: Install cargo-deny
+        if: steps.cache-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked
+
+      - name: Check licenses, bans and sources
+        # `advisories` is intentionally omitted — the cargo audit job above
+        # already covers RustSec. This job guards the other three: license
+        # compatibility with GPL-3.0-only, duplicate crate versions (a second
+        # crypto trait generation in the graph), and dependencies resolving to
+        # anything other than crates.io.
+        run: cargo deny check licenses bans sources

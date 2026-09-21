@@ -5,6 +5,7 @@ use colored::Colorize;
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::repo::{find_repo_root, git_crypt_dir};
+use crate::gpg::display::sanitize_for_display;
 use crate::gpg::operations::gpg_get_fingerprints;
 
 /// Remove a GPG user's access by deleting their encrypted key file.
@@ -44,7 +45,7 @@ pub fn rm_gpg_user(
             eprintln!(
                 "{} GPG user {} (fingerprint: {}) from key '{}'.",
                 "Removed".red().bold(),
-                gpg_user_id.bold(),
+                sanitize_for_display(gpg_user_id).bold(),
                 if fp.len() >= 16 { &fp[..16] } else { fp }.dimmed(),
                 key_name.bold()
             );
@@ -74,11 +75,7 @@ pub fn rm_gpg_user(
                 return Ok(());
             }
 
-            // Sanitize user ID for commit message
-            let safe_user_id: String = gpg_user_id
-                .chars()
-                .map(|c| if c.is_control() { '_' } else { c })
-                .collect();
+            let safe_user_id = sanitize_for_display(gpg_user_id);
 
             let commit_msg = format!(
                 "Remove {} from gitveil collaborators\n\nKey: {}",

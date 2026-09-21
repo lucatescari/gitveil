@@ -25,25 +25,38 @@ cargo build
 cargo test
 ```
 
-All 91 tests should pass (31 unit + 40 integration + 14 GPG integration + 6 cross-compatibility). They cover:
+All 138 tests should pass (57 unit + 56 integration + 19 GPG integration + 6 cross-compatibility). They cover:
 - AES-256-CTR encryption/decryption round-trips
-- HMAC-SHA1 known-answer vectors
+- HMAC-SHA1 known-answer vectors (RFC 2202)
+- Randomness: buffer fully filled, successive draws differ, empty buffer is a no-op (unit)
+- Clean-filter known-answer vector captured from git-crypt 0.8.0, so byte
+  compatibility is guarded on every platform even where git-crypt is not
+  installed and `cross_compat.rs` skips (unit)
 - Key file TLV serialization/deserialization
 - Clean/smudge/diff filter round-trips
 - Non-encrypted passthrough behavior
-- Key name validation
+- Key name validation, including names read back from disk or repository content (unit)
+- Key names carrying shell metacharacters are rejected before reaching a git filter command, in `configure_filters`/`deconfigure_filters` (unit) and end-to-end through `unlock` on a repository with a crafted key directory name (GPG integration)
 - Full E2E: init → encrypt → lock → unlock (integration)
 - Status, export-key, quiet mode, error messages (integration)
+- Status: default focused output (tracked + untracked filter-marked only), `(untracked)` suffix on untracked filter files to distinguish prospective vs actual encryption, `-a/--all` includes non-filter files, `-e` only files with encrypted blob, `-u` only WARNING files needing re-encryption, WARNING + summary for filter-marked files with plaintext blob, named-key filter, filenames with spaces, clear error outside a git repo, works without `gitveil init`, `-f` skips files deleted from the working tree, gitignored files are excluded (integration)
+- Status: `has_git_crypt_filter` recognizes default and named-key filters (unit)
 - Edge cases: empty files, binary files, multi-key lock (integration)
 - Pipe deadlock regression: many-file and large-blob status, unlock, lock (integration)
 - Global config: XDG resolution, keyring path save/load/remove, permissions (unit)
 - Config CLI: set-keyring, unset-keyring, show, overwrite, canonicalization, symlinks (integration)
 - Keyring fallback: add-gpg-user with no args, empty dir, deleted dir, precedence (integration)
 - Scan security: symlink skipping, non-key extensions, empty directory (integration)
+- Temp directories: unpredictable names, owner-only mode, never adopting an existing path (unit)
+- Untrusted display strings: terminal escape sequences and newlines stripped from GPG user IDs (unit)
+- GPG colon-output parsing: uid/fingerprint extraction, fingerprint validation, missing-field handling (unit)
 - GPG add-gpg-user: by email, fingerprint, --trusted, --no-commit, -k, --from file (GPG integration)
 - GPG rm-gpg-user: remove, --no-commit, user not found (GPG integration)
-- GPG ls-gpg-users: list, no users, named key (GPG integration)
+- GPG ls-gpg-users: list, no users, named key, honours `gpg.program` (GPG integration)
 - GPG unlock roundtrip: add user, lock, unlock via GPG (GPG integration)
+- GPG unlock with passphrase-protected key (pinentry/loopback) (GPG integration)
+- GPG unlock clear error when no secret key matches any collaborator (GPG integration)
+- GPG decrypt command builder: never passes `--batch` (suppresses pinentry) (unit)
 - GPG multi-user: add 2 users, remove 1, verify count (GPG integration)
 - Cross-tool: key exchange, encrypt/decrypt, named keys, binary files (cross-compatibility)
 
@@ -65,16 +78,18 @@ cargo run -- status
 
 ```
 src/
-  crypto/       Core cryptography (AES-CTR, HMAC-SHA1, random)
+  crypto/       Core cryptography (AES-CTR, HMAC-SHA1, OS randomness via getrandom)
   key/          Key file format (TLV serialization, entries, key container)
   filter/       Git clean/smudge/diff filters
   commands/     User-facing commands (init, lock, unlock, status, export-key,
                 add/rm/ls-gpg-users, config)
   git/          Git repository helpers (config, checkout, repo inspection)
-  gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI)
+  gpg/          GPG integration (key import, encrypt/decrypt via gpg CLI,
+                sanitizing untrusted user IDs for display)
   cli.rs        clap CLI definitions + shell completion generation
   config.rs     Global configuration (XDG keyring path)
   constants.rs  Shared constants (magic bytes, sizes, field IDs)
+  tempdir.rs    Unpredictable, owner-only temp directory creation
   error.rs      Error types
   main.rs       Entry point
 tests/
@@ -88,7 +103,9 @@ benchmark/
 scripts/
   release.sh      Automated release + Homebrew formula update
 .github/
-  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test)
+  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test, cargo audit, cargo deny)
+  dependabot.yml    Weekly cargo + github-actions dependency updates
+deny.toml           cargo-deny policy (licenses, duplicate versions, sources)
 ```
 
 ## Development Guidelines
@@ -98,6 +115,23 @@ scripts/
 - Run `cargo fmt` before committing
 - Run `cargo clippy` and fix any warnings
 - Follow standard Rust naming conventions
+
+### Dependencies
+
+CI enforces a dependency policy on top of the test suite. Both tools are
+optional locally (`cargo install cargo-audit cargo-deny --locked`), but a PR
+that trips either one will fail:
+
+- `cargo audit` fails on known RustSec vulnerabilities. Informational
+  advisories (unsound / unmaintained) are reported as warnings only.
+- `cargo deny check licenses bans sources` enforces `deny.toml`: dependency
+  licenses must be compatible with GPL-3.0-only, no crate may appear at two
+  versions, and every dependency must resolve to crates.io. The `advisories`
+  check is deliberately left to `cargo audit` rather than run twice.
+
+A duplicate-version failure matters most for the RustCrypto crates — two
+generations of the `cipher` / `digest` traits in one graph will not compile.
+That is why `.github/dependabot.yml` groups them into a single PR.
 
 ### Compatibility
 
@@ -119,7 +153,9 @@ This is the most important constraint. Gitveil must remain **byte-compatible** w
 
 - Key material (`aes_key`, `hmac_key`) must be zeroized on drop. The `KeyEntry` struct derives `ZeroizeOnDrop`.
 - Never log or print key material, even in debug builds
-- Use `rand::rngs::OsRng` for all random generation (not thread-local or seeded RNGs)
+- Use `crate::crypto::random::generate_random_bytes` for all random generation. It draws
+  straight from the OS CSPRNG via `getrandom`; there is deliberately no userspace PRNG in the
+  dependency graph, so never introduce a seeded or thread-local generator
 
 ### Adding a New Command
 
@@ -139,7 +175,7 @@ This is the most important constraint. Gitveil must remain **byte-compatible** w
 1. Fork the repository
 2. Create a feature branch (`git checkout -b my-feature`)
 3. Make your changes
-4. Run `cargo fmt && cargo clippy && cargo test`
+4. Run `cargo fmt && cargo clippy && cargo test` (and `cargo deny check licenses bans sources` if you changed dependencies)
 5. Commit with a clear message
 6. Open a pull request
 

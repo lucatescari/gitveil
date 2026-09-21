@@ -85,17 +85,23 @@ pub enum Commands {
         output_file: Option<PathBuf>,
     },
 
-    /// Display the encryption status of tracked files
+    /// Display the encryption status of files in the repository
     Status {
-        /// Show only encrypted files
+        /// Show only files whose blob is encrypted
         #[arg(short = 'e')]
         encrypted_only: bool,
 
-        /// Show only unencrypted files
+        /// Show only files marked for encryption whose blob is plaintext
+        /// (the set needing re-encryption — pair with -f to fix)
         #[arg(short = 'u')]
         unencrypted_only: bool,
 
-        /// Re-encrypt files that should be encrypted but aren't
+        /// Show every file, including files without the git-crypt filter
+        /// (verbose git-crypt-style listing)
+        #[arg(short = 'a', long = "all")]
+        all: bool,
+
+        /// Re-stage files that should be encrypted but aren't
         #[arg(short = 'f', long)]
         fix: bool,
     },

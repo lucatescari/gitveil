@@ -8,6 +8,7 @@ mod filter;
 mod git;
 mod gpg;
 mod key;
+mod tempdir;
 
 use std::io;
 use std::path::PathBuf;
@@ -58,8 +59,9 @@ fn main() {
         Commands::Status {
             encrypted_only,
             unencrypted_only,
+            all,
             fix,
-        } => commands::status::status(encrypted_only, unencrypted_only, fix),
+        } => commands::status::status(encrypted_only, unencrypted_only, all, fix),
 
         Commands::RmGpgUser {
             key_name,

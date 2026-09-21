@@ -5,6 +5,7 @@ use crate::error::GitVeilError;
 use crate::git::checkout::force_checkout_files;
 use crate::git::config::deconfigure_filters;
 use crate::git::repo::{find_git_dir, get_encrypted_files, is_working_tree_clean, key_path};
+use crate::key::key_file::validate_existing_key_name;
 
 /// Lock the repository: remove keys, deconfigure filters, and re-encrypt working copy.
 pub fn lock(
@@ -41,6 +42,19 @@ pub fn lock(
 
         for entry in key_entries {
             let name = entry.file_name().to_string_lossy().to_string();
+
+            // Same guard as unlock: a stray key file with a name carrying
+            // shell metacharacters must not reach the filter config.
+            if let Err(e) = validate_existing_key_name(&name) {
+                eprintln!(
+                    "{} ignoring key file with invalid name \"{}\": {}",
+                    "warning:".yellow().bold(),
+                    name.escape_default(),
+                    e
+                );
+                continue;
+            }
+
             lock_single_key(&name, &git_dir, quiet)?;
         }
     } else {

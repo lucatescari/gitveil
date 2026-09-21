@@ -77,6 +77,29 @@ fn gitveil_gpg(gpg_home: &Path, dir: &Path, args: &[&str]) -> Output {
         .unwrap_or_else(|e| panic!("failed to run gitveil {:?}: {}", args, e))
 }
 
+/// Run gitveil with a custom GNUPGHOME, feeding `input` to its stdin.
+/// Needed by the interactive key picker (`add-gpg-user --from <directory>`),
+/// which reads a selection from stdin.
+fn gitveil_gpg_stdin(gpg_home: &Path, dir: &Path, args: &[&str], input: &str) -> Output {
+    use std::io::Write;
+    let mut child = Command::new(gitveil_bin())
+        .args(args)
+        .current_dir(dir)
+        .env("GNUPGHOME", gpg_home)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to spawn gitveil {:?}: {}", args, e));
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("gitveil failed")
+}
+
 /// Run git in a directory.
 fn git(dir: &Path, args: &[&str]) -> Output {
     Command::new("git")
@@ -137,13 +160,45 @@ fn make_initialized_repo(gpg_home: &Path) -> tempfile::TempDir {
 
 /// Generate a GPG test key in the given GNUPGHOME. Returns the fingerprint.
 fn generate_test_key(gpg_home: &Path, name: &str, email: &str) -> String {
-    let key_spec = format!(
-        "%no-protection\nKey-Type: RSA\nKey-Length: 2048\nName-Real: {}\nName-Email: {}\nExpire-Date: 0\n%commit\n",
-        name, email
-    );
+    generate_test_key_inner(gpg_home, name, email, None)
+}
+
+/// Generate a passphrase-protected GPG test key. Returns the fingerprint.
+fn generate_test_key_with_passphrase(
+    gpg_home: &Path,
+    name: &str,
+    email: &str,
+    passphrase: &str,
+) -> String {
+    generate_test_key_inner(gpg_home, name, email, Some(passphrase))
+}
+
+fn generate_test_key_inner(
+    gpg_home: &Path,
+    name: &str,
+    email: &str,
+    passphrase: Option<&str>,
+) -> String {
+    let key_spec = match passphrase {
+        None => format!(
+            "%no-protection\nKey-Type: RSA\nKey-Length: 2048\nName-Real: {}\nName-Email: {}\nExpire-Date: 0\n%commit\n",
+            name, email
+        ),
+        Some(pw) => format!(
+            "Key-Type: RSA\nKey-Length: 2048\nName-Real: {}\nName-Email: {}\nExpire-Date: 0\nPassphrase: {}\n%commit\n",
+            name, email, pw
+        ),
+    };
+
+    // For passphrase-protected keys, loopback mode keeps gpg from invoking
+    // pinentry while generating the key in CI without a TTY.
+    let mut args: Vec<&str> = vec!["--batch", "--gen-key"];
+    if passphrase.is_some() {
+        args.extend_from_slice(&["--pinentry-mode", "loopback"]);
+    }
 
     let mut child = Command::new("gpg")
-        .args(["--batch", "--gen-key"])
+        .args(&args)
         .env("GNUPGHOME", gpg_home)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -723,5 +778,334 @@ fn test_add_and_remove_multiple_users() {
         stdout.contains("1 user"),
         "should show 1 user remaining: {}",
         stdout
+    );
+}
+
+// ─── Passphrase Prompt Regression ──────────────────────────────
+
+/// Verifies that gitveil unlock works when the user's GPG private key is
+/// passphrase-protected. The earlier implementation passed `--batch` to gpg
+/// during decryption, which suppressed pinentry and failed with
+/// "Inappropriate ioctl for device". Pinentry can't run in CI, so the test
+/// supplies the passphrase via gpg's loopback `passphrase-file` mechanism —
+/// the same code path gpg uses when pinentry is unavailable.
+#[test]
+fn test_gpg_unlock_with_passphrase_protected_key() {
+    skip_without_gpg!();
+    let gpg_home = tempfile::tempdir().unwrap();
+
+    // Configure gpg-agent and gpg to accept a passphrase via file (no TTY).
+    let passphrase = "test-gitveil-passphrase";
+    let passphrase_file = gpg_home.path().join("passphrase.txt");
+    fs::write(&passphrase_file, passphrase).unwrap();
+    fs::write(
+        gpg_home.path().join("gpg-agent.conf"),
+        "allow-loopback-pinentry\n",
+    )
+    .unwrap();
+    // Forward slashes work on every platform GnuPG runs on, including
+    // Windows; backslashes can be interpreted as escapes in gpg.conf.
+    let pw_path_gpgconf = passphrase_file.display().to_string().replace('\\', "/");
+    fs::write(
+        gpg_home.path().join("gpg.conf"),
+        format!(
+            "pinentry-mode loopback\npassphrase-file {}\n",
+            pw_path_gpgconf
+        ),
+    )
+    .unwrap();
+
+    generate_test_key_with_passphrase(gpg_home.path(), "Pat Test", "pat@gitveil.test", passphrase);
+    let dir = make_initialized_repo(gpg_home.path());
+
+    // Track an encrypted file
+    let gitattributes = dir.path().join(".gitattributes");
+    fs::write(&gitattributes, "*.secret filter=git-crypt diff=git-crypt\n").unwrap();
+    let secret_file = dir.path().join("data.secret");
+    fs::write(&secret_file, "pinentry-roundtrip-secret\n").unwrap();
+    assert_success(&git(dir.path(), &["add", "."]), "git add");
+    assert_success(
+        &git(dir.path(), &["commit", "-m", "add secrets"]),
+        "git commit secrets",
+    );
+
+    assert_success(
+        &gitveil_gpg(
+            gpg_home.path(),
+            dir.path(),
+            &["add-gpg-user", "--trusted", "pat@gitveil.test"],
+        ),
+        "add-gpg-user",
+    );
+    assert_success(
+        &gitveil_gpg(gpg_home.path(), dir.path(), &["lock", "--force"]),
+        "gitveil lock",
+    );
+
+    let locked = fs::read(&secret_file).unwrap();
+    assert!(
+        locked.starts_with(b"\0GITCRYPT\0"),
+        "file should be encrypted after lock"
+    );
+
+    // The actual regression: unlock used to fail with "Inappropriate ioctl
+    // for device" against a passphrase-protected key. With --batch removed
+    // and stdio inherited, gpg can use the agent (loopback in this test).
+    let out = gitveil_gpg(gpg_home.path(), dir.path(), &["unlock"]);
+    assert_success(&out, "gitveil unlock (passphrase-protected key)");
+
+    let decrypted = fs::read_to_string(&secret_file).unwrap();
+    assert_eq!(decrypted, "pinentry-roundtrip-secret\n");
+}
+
+// ─── Missing Secret Key ────────────────────────────────────────
+
+/// When the local GPG keyring holds no secret key matching any collaborator,
+/// unlock should fail with a clear, actionable error — not loop through every
+/// .gpg file calling pinentry and burying the user under "no secret key"
+/// noise on stderr.
+#[test]
+fn test_gpg_unlock_no_matching_secret_key_gives_clear_error() {
+    skip_without_gpg!();
+
+    // Alice's keyring (has the private key).
+    let alice_home = tempfile::tempdir().unwrap();
+    generate_test_key(
+        alice_home.path(),
+        "Alice Test",
+        "alice-nomatch@gitveil.test",
+    );
+    let alice_pub = alice_home.path().join("alice.asc");
+    export_key_to_file(alice_home.path(), "alice-nomatch@gitveil.test", &alice_pub);
+
+    // Bob's keyring: imports Alice's *public* key but has no private key
+    // matching any collaborator.
+    let bob_home = tempfile::tempdir().unwrap();
+    let import_out = Command::new("gpg")
+        .args(["--batch", "--import"])
+        .arg(&alice_pub)
+        .env("GNUPGHOME", bob_home.path())
+        .output()
+        .expect("import alice pubkey into bob");
+    assert_success(&import_out, "import alice public key into bob");
+
+    let dir = make_initialized_repo(bob_home.path());
+    assert_success(
+        &gitveil_gpg(
+            bob_home.path(),
+            dir.path(),
+            &["add-gpg-user", "--trusted", "alice-nomatch@gitveil.test"],
+        ),
+        "add Alice as collaborator",
+    );
+
+    let out = gitveil_gpg(bob_home.path(), dir.path(), &["unlock"]);
+    assert!(
+        !out.status.success(),
+        "unlock should fail when no secret key matches"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no GPG secret key") || stderr.contains("secret key"),
+        "error should mention missing secret key, got: {}",
+        stderr,
+    );
+}
+
+// ─── Malicious Repository Content ──────────────────────────────
+
+/// Regression: repository content must never reach a git filter command.
+///
+/// `unlock` derives the key name from a directory name under
+/// `.git-crypt/keys/`, which is attacker-controlled repository content, and
+/// feeds it to `git config filter.<name>.smudge`. git runs those filter
+/// commands through a shell, so an unvalidated name is remote code execution
+/// on every collaborator who unlocks the repository.
+#[test]
+fn test_gpg_unlock_rejects_key_dir_name_with_shell_metacharacters() {
+    skip_without_gpg!();
+
+    // `${IFS}` supplies the argument separator without a literal space:
+    // the payload has to be valid both as a path component and as a
+    // .gitattributes attribute value.
+    const EVIL: &str = "x$(touch${IFS}pwned)";
+
+    let gpg_home = tempfile::tempdir().unwrap();
+    generate_test_key(gpg_home.path(), "Vic Test", "vic-evil@gitveil.test");
+    let dir = make_initialized_repo(gpg_home.path());
+
+    // The victim is a legitimate collaborator, so the .gpg file really does
+    // decrypt with their secret key.
+    assert_success(
+        &gitveil_gpg(
+            gpg_home.path(),
+            dir.path(),
+            &["add-gpg-user", "--trusted", "vic-evil@gitveil.test"],
+        ),
+        "add-gpg-user",
+    );
+
+    // Attacker-supplied repository content: a key directory whose name is a
+    // shell payload, plus a file routed through the matching filter so that
+    // unlock's `git checkout` triggers it.
+    let keys_dir = dir.path().join(".git-crypt").join("keys");
+    fs::rename(keys_dir.join("default"), keys_dir.join(EVIL))
+        .expect("rename key dir to payload name");
+    fs::write(
+        dir.path().join(".gitattributes"),
+        format!("*.secret filter=git-crypt-{EVIL} diff=git-crypt-{EVIL}\n"),
+    )
+    .unwrap();
+    fs::write(dir.path().join("data.secret"), "secret\n").unwrap();
+    assert_success(&git(dir.path(), &["add", "-A"]), "git add payload");
+    assert_success(
+        &git(dir.path(), &["commit", "-m", "attacker payload"]),
+        "git commit payload",
+    );
+
+    let out = gitveil_gpg(gpg_home.path(), dir.path(), &["unlock"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        !dir.path().join("pwned").exists(),
+        "REMOTE CODE EXECUTION: the key directory name was executed by git.\nstderr: {stderr}",
+    );
+
+    let cfg = git(dir.path(), &["config", "--get-regexp", "^filter\\."]);
+    let cfg = String::from_utf8_lossy(&cfg.stdout);
+    assert!(
+        !cfg.contains("$("),
+        "poisoned filter command written to git config:\n{cfg}",
+    );
+
+    assert!(
+        !out.status.success(),
+        "unlock must not report success when the only key directory is unusable",
+    );
+    assert!(
+        stderr.contains("invalid name"),
+        "expected a diagnostic naming the rejected directory, got: {stderr}",
+    );
+}
+
+/// `add-gpg-user --from <git URL>` clones the keyring into a temp directory
+/// and runs the interactive picker over it. The branch had no coverage at
+/// all; it is also the consumer of `create_private_temp_dir`, so this pins
+/// the whole clone → scan → pick → import → add path.
+///
+/// A local path ending in `.git` satisfies `is_git_url`, so the clone stays
+/// offline.
+#[test]
+fn test_add_gpg_user_from_git_url() {
+    skip_without_gpg!();
+    let gpg_home = tempfile::tempdir().unwrap();
+    generate_test_key(gpg_home.path(), "Willow Test", "willow@gitveil.test");
+
+    // A keyring repository holding one exported public key.
+    let keyring_parent = tempfile::tempdir().unwrap();
+    let keyring = keyring_parent.path().join("keyring.git");
+    fs::create_dir(&keyring).unwrap();
+    assert_success(&git(&keyring, &["init"]), "git init keyring");
+    assert_success(
+        &git(&keyring, &["config", "user.email", "test@gitveil.test"]),
+        "keyring config email",
+    );
+    assert_success(
+        &git(&keyring, &["config", "user.name", "Test"]),
+        "keyring config name",
+    );
+    export_key_to_file(
+        gpg_home.path(),
+        "willow@gitveil.test",
+        &keyring.join("willow.asc"),
+    );
+    assert_success(&git(&keyring, &["add", "willow.asc"]), "keyring add");
+    assert_success(
+        &git(&keyring, &["commit", "-m", "add key"]),
+        "keyring commit",
+    );
+
+    let dir = make_initialized_repo(gpg_home.path());
+    let out = gitveil_gpg_stdin(
+        gpg_home.path(),
+        dir.path(),
+        &[
+            "add-gpg-user",
+            "--trusted",
+            "--from",
+            &keyring.to_string_lossy(),
+        ],
+        "all\n",
+    );
+    assert_success(&out, "add-gpg-user --from git URL");
+
+    assert_eq!(
+        count_gpg_files(dir.path(), "default"),
+        1,
+        "the cloned key should have been added as a collaborator"
+    );
+
+    // The clone is cleaned up, and never under the old guessable name.
+    let leftovers: Vec<_> = fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("gitveil-keyring-"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "temp clone directories left behind: {leftovers:?}"
+    );
+}
+
+/// Regression: every GPG invocation must go through `gpg.program`.
+///
+/// `ls-gpg-users` resolved fingerprints to user IDs with a hardcoded
+/// `gpg`, so anyone whose gpg lives elsewhere (a wrapper, `gpg2`, a
+/// non-PATH install) saw "(not in local keyring)" for collaborators who
+/// were perfectly well known to their real keyring.
+#[test]
+fn test_ls_gpg_users_honours_gpg_program_config() {
+    skip_without_gpg!();
+    let gpg_home = tempfile::tempdir().unwrap();
+    generate_test_key(gpg_home.path(), "Quinn Test", "quinn@gitveil.test");
+    let dir = make_initialized_repo(gpg_home.path());
+    assert_success(
+        &gitveil_gpg(
+            gpg_home.path(),
+            dir.path(),
+            &["add-gpg-user", "--trusted", "quinn@gitveil.test"],
+        ),
+        "add-gpg-user",
+    );
+
+    // Baseline: with the default gpg, the UID resolves.
+    let out = gitveil_gpg(gpg_home.path(), dir.path(), &["ls-gpg-users"]);
+    assert_success(&out, "ls-gpg-users baseline");
+    let baseline = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        baseline.contains("quinn@gitveil.test"),
+        "baseline: UID should resolve, got: {baseline}"
+    );
+
+    // Point gpg.program at a binary that does not exist. Every GPG call has
+    // to route through it, so the UID must no longer resolve.
+    assert_success(
+        &git(
+            dir.path(),
+            &["config", "gpg.program", "gitveil-no-such-gpg-binary"],
+        ),
+        "set gpg.program",
+    );
+
+    let out = gitveil_gpg(gpg_home.path(), dir.path(), &["ls-gpg-users"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("quinn@gitveil.test"),
+        "ls-gpg-users bypassed gpg.program and called the system gpg directly, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("not in local keyring"),
+        "expected the fingerprint to be left unresolved, got: {stdout}"
     );
 }

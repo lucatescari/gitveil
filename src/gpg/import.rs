@@ -5,7 +5,8 @@ use std::process::{Command, Stdio};
 use colored::Colorize;
 
 use crate::error::GitVeilError;
-use crate::gpg::operations::get_gpg_program;
+use crate::gpg::display::sanitize_for_display;
+use crate::gpg::operations::{get_gpg_program, validate_fingerprint};
 
 /// Information about a GPG public key file.
 pub struct GpgKeyInfo {
@@ -61,10 +62,22 @@ pub fn preview_key_file(path: &Path) -> Result<GpgKeyInfo, GitVeilError> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut info = parse_key_info(&stdout)
+        .map_err(|e| GitVeilError::Gpg(format!("{} in key file: {}", e, path.display())))?;
+    info.path = path.to_path_buf();
+    Ok(info)
+}
+
+/// Parse `gpg --with-colons` key listing output into a [`GpgKeyInfo`].
+///
+/// Split out from the subprocess call so the parsing — including fingerprint
+/// validation — is testable without invoking gpg. `path` is left empty; the
+/// caller fills it in.
+fn parse_key_info(colon_output: &str) -> Result<GpgKeyInfo, GitVeilError> {
     let mut uid = String::new();
     let mut fingerprint = String::new();
 
-    for line in stdout.lines() {
+    for line in colon_output.lines() {
         let parts: Vec<&str> = line.split(':').collect();
         if parts.is_empty() {
             continue;
@@ -80,18 +93,21 @@ pub fn preview_key_file(path: &Path) -> Result<GpgKeyInfo, GitVeilError> {
     }
 
     if fingerprint.is_empty() {
-        return Err(GitVeilError::Gpg(format!(
-            "no fingerprint found in key file: {}",
-            path.display()
-        )));
+        return Err(GitVeilError::Gpg("no fingerprint found".into()));
     }
+
+    // This fingerprint becomes a path component (`<fingerprint>.gpg`) and a
+    // gpg recipient argument. Every other fingerprint in the codebase is
+    // validated at its source; this one arrives via key-file parsing, so it
+    // is held to the same rule.
+    validate_fingerprint(&fingerprint)?;
 
     if uid.is_empty() {
         uid = "(no UID)".to_string();
     }
 
     Ok(GpgKeyInfo {
-        path: path.to_path_buf(),
+        path: std::path::PathBuf::new(),
         uid,
         fingerprint,
     })
@@ -138,19 +154,20 @@ pub fn pick_keys(keys: &[GpgKeyInfo]) -> Result<Vec<usize>, GitVeilError> {
 
     for (i, key) in keys.iter().enumerate() {
         let num = format!("  {:>3})", i + 1).cyan().bold();
-        let uid = key.uid.bold();
+        let uid = sanitize_for_display(&key.uid).bold();
         let fp_short = if key.fingerprint.len() >= 16 {
             &key.fingerprint[..16]
         } else {
             &key.fingerprint
         };
         let fp = format!("({}...)", fp_short).dimmed();
-        let file = key
-            .path
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_default()
-            .dimmed();
+        let file = sanitize_for_display(
+            &key.path
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        )
+        .dimmed();
         writeln!(out, "{}  {}  {}  {}", num, uid, fp, file).ok();
     }
 
@@ -239,4 +256,62 @@ fn is_key_file_extension(path: &Path) -> bool {
         path.extension().and_then(|e| e.to_str()),
         Some("asc" | "gpg" | "pub" | "key")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REAL_OUTPUT: &str = "\
+pub:-:3072:1:ABCDEF0123456789:1700000000:::-:::scESC::::::23::0:
+fpr:::::::::AAAABBBBCCCCDDDDEEEEFFFF00001111222233334444:
+uid:::::::::Alice Mueller <alice@example.test>:
+";
+
+    #[test]
+    fn parses_uid_and_fingerprint() {
+        let info = parse_key_info(REAL_OUTPUT).unwrap();
+        assert_eq!(
+            info.fingerprint,
+            "AAAABBBBCCCCDDDDEEEEFFFF00001111222233334444"
+        );
+        assert_eq!(info.uid, "Alice Mueller <alice@example.test>");
+    }
+
+    /// The fingerprint is joined into a path (`<fingerprint>.gpg` under
+    /// `.git-crypt/keys/<key>/0/`), so it must be hex before it is used —
+    /// every other fingerprint entering the codebase is already validated.
+    #[test]
+    fn rejects_a_fingerprint_that_is_not_hex() {
+        let output = "fpr:::::::::../../../../etc/cron.d/pwned:\n";
+        assert!(
+            parse_key_info(output).is_err(),
+            "non-hex fingerprint must be rejected"
+        );
+    }
+
+    #[test]
+    fn rejects_a_fingerprint_of_the_wrong_length() {
+        let output = "fpr:::::::::AABB:\n";
+        assert!(
+            parse_key_info(output).is_err(),
+            "short fingerprint must be rejected"
+        );
+    }
+
+    #[test]
+    fn rejects_output_without_a_fingerprint() {
+        let output = "uid:::::::::Alice <alice@example.test>:\n";
+        assert!(
+            parse_key_info(output).is_err(),
+            "missing fpr must be an error"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_a_placeholder_uid() {
+        let output = "fpr:::::::::AAAABBBBCCCCDDDDEEEEFFFF00001111222233334444:\n";
+        let info = parse_key_info(output).unwrap();
+        assert_eq!(info.uid, "(no UID)");
+    }
 }

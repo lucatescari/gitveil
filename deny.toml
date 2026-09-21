@@ -1,0 +1,47 @@
+# cargo-deny configuration.
+#
+# Scope note: the `advisories` check is deliberately NOT run in CI — the
+# separate `cargo audit` job already covers RustSec advisories and reports
+# informational (unsound / unmaintained) findings as warnings. Running both
+# would duplicate the signal. CI runs `cargo deny check licenses bans sources`.
+
+[graph]
+all-features = true
+
+[licenses]
+# GPL-3.0-only is this crate's own license. Everything below is either
+# permissive or GPL-3.0-compatible weak copyleft. Crates offering a choice
+# (e.g. rustix: "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT")
+# resolve against the first allowed term, so only the terms actually
+# selected need listing here.
+allow = [
+    "Apache-2.0",
+    "GPL-3.0-only",
+    "MIT",
+    # `colored` is MPL-2.0: file-level copyleft, explicitly GPL-compatible.
+    "MPL-2.0",
+    # `unicode-ident` is "(MIT OR Apache-2.0) AND Unicode-3.0".
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# A second copy of a crypto crate in the graph means two incompatible
+# trait generations (see the `rustcrypto` group in .github/dependabot.yml).
+# Denying duplicates outright is what catches that.
+multiple-versions = "deny"
+wildcards = "deny"
+
+skip = [
+    # syn 2 and syn 3 coexist because zeroize_derive is still on 2 while
+    # clap_derive and thiserror-impl moved to 3. Both are proc-macro
+    # build-time only and never reach the shipped binary.
+    { crate = "syn" },
+]
+
+[sources]
+# Every dependency must come from crates.io. A git or alternate-registry
+# source appearing in the graph is the supply-chain case worth failing on.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

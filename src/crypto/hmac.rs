@@ -1,4 +1,6 @@
-use hmac::{Hmac, Mac};
+// `new_from_slice` moved from `Mac` to `KeyInit` in the hmac 0.13 /
+// digest 0.11 generation; both traits must be in scope.
+use hmac::{Hmac, KeyInit, Mac};
 use sha1::Sha1;
 
 use crate::constants::{HMAC_KEY_LEN, NONCE_LEN};
