@@ -54,7 +54,7 @@ brew install lucatescari/gitveil/gitveil
 ```bash
 git clone https://github.com/lucatescari/gitveil.git
 cd gitveil
-cargo build --release
+cargo build --release --locked   # use the audited Cargo.lock
 cp target/release/gitveil /usr/local/bin/
 ```
 

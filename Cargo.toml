@@ -12,13 +12,15 @@ categories = ["command-line-utilities", "cryptography"]
 exclude = ["/benchmark", "/docs", "/scripts", "/.github", "/gitveil.svg", "/CLAUDE.md"]
 
 [dependencies]
+# Crypto crates: `zeroize` makes the expanded AES round keys, CTR state and
+# HMAC ipad/opad state scrub themselves on drop. It changes no output bytes.
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
-aes = "0.9.4"
-ctr = "0.10.1"
-cipher = "0.5.2"
-hmac = "0.13"
-sha1 = "0.11"
+aes = { version = "0.9.4", features = ["zeroize"] }
+ctr = { version = "0.10.1", features = ["zeroize"] }
+cipher = { version = "0.5.2", features = ["zeroize"] }
+hmac = { version = "0.13", features = ["zeroize"] }
+sha1 = { version = "0.11", features = ["zeroize"] }
 getrandom = "0.4.3"
 thiserror = "2"
 byteorder = "1"

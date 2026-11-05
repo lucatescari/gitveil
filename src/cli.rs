@@ -161,9 +161,12 @@ pub enum Commands {
     },
 
     /// [plumbing] Decrypt a file for diff (textconv)
+    ///
+    /// Invoked by git as `gitveil diff [KEY_NAME] FILE`. With a single
+    /// argument it is the file and the default key is used.
     #[command(hide = true)]
     Diff {
-        /// Key name
+        /// Key name (or the file, when only one argument is given)
         #[arg()]
         key_name: Option<String>,
 
@@ -199,4 +202,31 @@ pub fn print_completions(shell: Shell) {
         "gitveil",
         &mut std::io::stdout(),
     );
+}
+
+impl Commands {
+    /// The `-k/--key-name` value of commands that take one.
+    pub fn key_name(&self) -> Option<&str> {
+        match self {
+            Commands::Init { key_name }
+            | Commands::Lock { key_name, .. }
+            | Commands::AddGpgUser { key_name, .. }
+            | Commands::ExportKey { key_name, .. }
+            | Commands::RmGpgUser { key_name, .. }
+            | Commands::LsGpgUsers { key_name }
+            | Commands::Clean { key_name }
+            | Commands::Smudge { key_name }
+            | Commands::Diff {
+                key_name,
+                file: Some(_),
+            } => key_name.as_deref(),
+            // `gitveil diff <FILE>`: git's textconv for the default key passes
+            // only the file, which clap puts in the first positional slot.
+            Commands::Diff { file: None, .. } => None,
+            Commands::Unlock { .. }
+            | Commands::Status { .. }
+            | Commands::Config { .. }
+            | Commands::Completions { .. } => None,
+        }
+    }
 }

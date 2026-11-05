@@ -15,11 +15,24 @@ pub type TlvField = (u32, Zeroizing<Vec<u8>>);
 /// (AES keys, HMAC keys) is automatically scrubbed from memory when the
 /// caller drops the buffer after copying into fixed-size arrays.
 pub fn read_field(reader: &mut dyn Read) -> Result<Option<TlvField>, GitVeilError> {
-    let field_id = match reader.read_u32::<BigEndian>() {
-        Ok(id) => id,
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(GitVeilError::Io(e)),
-    };
+    // Distinguish a clean EOF (0 bytes) from a truncated field id (1-3
+    // bytes); only the former means "no more fields".
+    let mut id_bytes = [0u8; 4];
+    let mut got = 0;
+    while got < 4 {
+        match reader.read(&mut id_bytes[got..]) {
+            Ok(0) => break,
+            Ok(n) => got += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(GitVeilError::Io(e)),
+        }
+    }
+    match got {
+        0 => return Ok(None),
+        4 => {}
+        _ => return Err(GitVeilError::InvalidKeyFile("truncated field id".into())),
+    }
+    let field_id = u32::from_be_bytes(id_bytes);
 
     // End-of-section sentinel: git-crypt writes only field_id=0 with no
     // following field_len. Return immediately to stay compatible.
@@ -104,6 +117,12 @@ mod tests {
     fn test_read_field_eof() {
         let mut cursor = Cursor::new(Vec::<u8>::new());
         assert!(read_field(&mut cursor).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_read_field_truncated_id_is_error() {
+        let mut cursor = Cursor::new(vec![0u8, 0]);
+        assert!(read_field(&mut cursor).is_err());
     }
 
     #[test]

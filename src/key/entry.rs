@@ -37,11 +37,20 @@ impl KeyEntry {
 
     /// Load a key entry from a stream by reading TLV fields until KEY_FIELD_END.
     pub fn load(reader: &mut dyn std::io::Read) -> Result<Self, GitVeilError> {
-        let mut version: Option<u32> = None;
-        let mut aes_key: Option<[u8; AES_KEY_LEN]> = None;
-        let mut hmac_key: Option<[u8; HMAC_KEY_LEN]> = None;
+        // Fill a zeroize-on-drop entry directly, so key bytes never sit in
+        // loose `[u8; N]` stack copies that an early `return Err` would leak.
+        let mut entry = KeyEntry {
+            version: 0,
+            aes_key: [0u8; AES_KEY_LEN],
+            hmac_key: [0u8; HMAC_KEY_LEN],
+        };
+        let (mut have_version, mut have_aes, mut have_hmac) = (false, false, false);
 
-        while let Some((field_id, data)) = read_field(reader)? {
+        loop {
+            // git-crypt treats EOF before KEY_FIELD_END as malformed.
+            let (field_id, data) = read_field(reader)?.ok_or_else(|| {
+                GitVeilError::InvalidKeyFile("truncated key entry (no end marker)".into())
+            })?;
             match field_id {
                 KEY_FIELD_END => break,
                 KEY_FIELD_VERSION => {
@@ -50,7 +59,8 @@ impl KeyEntry {
                             "version field must be 4 bytes".into(),
                         ));
                     }
-                    version = Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]]));
+                    entry.version = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                    have_version = true;
                 }
                 KEY_FIELD_AES_KEY => {
                     if data.len() != AES_KEY_LEN {
@@ -60,9 +70,8 @@ impl KeyEntry {
                             data.len()
                         )));
                     }
-                    let mut key = [0u8; AES_KEY_LEN];
-                    key.copy_from_slice(&data);
-                    aes_key = Some(key);
+                    entry.aes_key.copy_from_slice(&data);
+                    have_aes = true;
                 }
                 KEY_FIELD_HMAC_KEY => {
                     if data.len() != HMAC_KEY_LEN {
@@ -72,37 +81,35 @@ impl KeyEntry {
                             data.len()
                         )));
                     }
-                    let mut key = [0u8; HMAC_KEY_LEN];
-                    key.copy_from_slice(&data);
-                    hmac_key = Some(key);
+                    entry.hmac_key.copy_from_slice(&data);
+                    have_hmac = true;
                 }
                 _ => {
                     if is_critical_field(field_id) {
                         return Err(GitVeilError::IncompatibleField(field_id));
                     }
-                    // Skip unknown non-critical fields
                 }
             }
         }
 
-        let version = version.ok_or_else(|| {
-            GitVeilError::InvalidKeyFile("missing version field in key entry".into())
-        })?;
-        let aes_key = aes_key.ok_or_else(|| {
-            GitVeilError::InvalidKeyFile("missing AES key field in key entry".into())
-        })?;
-        let hmac_key = hmac_key.ok_or_else(|| {
-            GitVeilError::InvalidKeyFile("missing HMAC key field in key entry".into())
-        })?;
-
-        Ok(KeyEntry {
-            version,
-            aes_key,
-            hmac_key,
-        })
+        if !have_version {
+            return Err(GitVeilError::InvalidKeyFile(
+                "missing version field in key entry".into(),
+            ));
+        }
+        if !have_aes {
+            return Err(GitVeilError::InvalidKeyFile(
+                "missing AES key field in key entry".into(),
+            ));
+        }
+        if !have_hmac {
+            return Err(GitVeilError::InvalidKeyFile(
+                "missing HMAC key field in key entry".into(),
+            ));
+        }
+        Ok(entry)
     }
 
-    /// Store a key entry to a stream as TLV fields.
     pub fn store(&self, writer: &mut dyn std::io::Write) -> Result<(), GitVeilError> {
         write_field(writer, KEY_FIELD_VERSION, &self.version.to_be_bytes())?;
         write_field(writer, KEY_FIELD_AES_KEY, &self.aes_key)?;
@@ -141,6 +148,15 @@ mod tests {
         assert_eq!(loaded.version, entry.version);
         assert_eq!(loaded.aes_key, entry.aes_key);
         assert_eq!(loaded.hmac_key, entry.hmac_key);
+    }
+
+    #[test]
+    fn test_load_rejects_missing_end_marker() {
+        let entry = KeyEntry::generate(0);
+        let mut buf = Vec::new();
+        entry.store(&mut buf).unwrap();
+        buf.truncate(buf.len() - 4); // drop KEY_FIELD_END
+        assert!(KeyEntry::load(&mut Cursor::new(&buf)).is_err());
     }
 
     #[test]

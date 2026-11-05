@@ -21,6 +21,15 @@ pub const NONCE_LEN: usize = 12;
 /// Maximum field length in key file (1 MiB)
 pub const MAX_FIELD_LEN: usize = 1 << 20;
 
+/// Maximum number of bytes encrypted or decrypted under one nonce: the
+/// 32-bit block counter of AES-CTR covers 2^32 blocks of 16 bytes. Matches
+/// git-crypt's `Aes_ctr_encryptor::MAX_CRYPT_BYTES`.
+pub const MAX_CRYPT_BYTES: u64 = (1u64 << 32) * 16;
+
+/// Upper bound on the size of a key file read from disk. A real key file is
+/// well under 1 KiB; this caps memory use on a crafted one.
+pub const MAX_KEY_FILE_LEN: u64 = 1 << 20;
+
 /// Maximum key name length
 pub const KEY_NAME_MAX_LEN: usize = 128;
 

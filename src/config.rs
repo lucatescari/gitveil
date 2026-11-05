@@ -192,6 +192,7 @@ mod tests {
         old: Option<String>,
     }
 
+    #[allow(unsafe_code)]
     impl XdgGuard {
         fn set(path: &Path) -> Self {
             let old = std::env::var("XDG_CONFIG_HOME").ok();
@@ -202,6 +203,7 @@ mod tests {
         }
     }
 
+    #[allow(unsafe_code)]
     impl Drop for XdgGuard {
         fn drop(&mut self) {
             // SAFETY: caller still holds ENV_LOCK (guard dropped before lock)

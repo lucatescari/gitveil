@@ -37,6 +37,22 @@ pub fn derive_nonce(hmac_key: &[u8; HMAC_KEY_LEN], plaintext: &[u8]) -> [u8; NON
     nonce
 }
 
+/// Check, in constant time, that `nonce` is the HMAC-SHA1 nonce of
+/// `plaintext` under `hmac_key` — i.e. that the plaintext is exactly what was
+/// encrypted. This is git-crypt's tamper check (`leakless_equals` on the
+/// first 12 digest bytes).
+pub fn verify_nonce(
+    hmac_key: &[u8; HMAC_KEY_LEN],
+    plaintext: &[u8],
+    nonce: &[u8; NONCE_LEN],
+) -> bool {
+    let mut mac = HmacSha1::new_from_slice(hmac_key).expect("HMAC-SHA1 accepts any key length");
+    mac.update(plaintext);
+    // `verify_truncated_left` compares the leftmost `nonce.len()` bytes of the
+    // tag with a constant-time equality check.
+    mac.verify_truncated_left(nonce).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +70,24 @@ mod tests {
             0x8c, 0x8e, 0xf1, 0x46, 0xbe, 0x00,
         ];
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_verify_nonce_accepts_matching() {
+        let key = [7u8; HMAC_KEY_LEN];
+        let nonce = derive_nonce(&key, b"payload");
+        assert!(verify_nonce(&key, b"payload", &nonce));
+    }
+
+    #[test]
+    fn test_verify_nonce_rejects_modified_data_nonce_or_key() {
+        let key = [7u8; HMAC_KEY_LEN];
+        let nonce = derive_nonce(&key, b"payload");
+        assert!(!verify_nonce(&key, b"paYload", &nonce));
+        let mut bad = nonce;
+        bad[11] ^= 1;
+        assert!(!verify_nonce(&key, b"payload", &bad));
+        assert!(!verify_nonce(&[8u8; HMAC_KEY_LEN], b"payload", &nonce));
     }
 
     #[test]
