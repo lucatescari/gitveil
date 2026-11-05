@@ -51,7 +51,6 @@ impl KeyFile {
     }
 
     /// Get the entry for a specific key version.
-    #[allow(dead_code)] // used by unlock key validation (gpg layer)
     pub fn get(&self, version: u32) -> Option<&KeyEntry> {
         self.entries.get(&version)
     }
@@ -59,12 +58,6 @@ impl KeyFile {
     /// All entries, highest version first.
     pub fn entries_newest_first(&self) -> impl Iterator<Item = &KeyEntry> {
         self.entries.values().rev()
-    }
-
-    /// The key name embedded in the file, if any (`None` for the default key).
-    #[allow(dead_code)] // used by unlock key validation (gpg layer)
-    pub fn embedded_key_name(&self) -> Option<&str> {
-        self.key_name.as_deref()
     }
 
     /// Load a key file from a reader.

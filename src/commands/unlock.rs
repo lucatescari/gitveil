@@ -222,11 +222,11 @@ fn validate_collaborator_key(kf: &KeyFile, key_name: &str) -> Result<(), GitVeil
             sanitize_for_display(kf.key_name())
         )));
     }
-    // git-crypt requires a version-0 entry here; KeyFile has no per-version
-    // accessor, so at minimum require that the key contains an entry.
-    if kf.latest().is_none() {
+    // Files are under `.git-crypt/keys/<name>/0/`: git-crypt requires the
+    // decrypted key to contain that version-0 entry.
+    if kf.get(0).is_none() {
         return Err(GitVeilError::InvalidKeyFile(format!(
-            "GPG-encrypted key file for key '{}' contains no key entries",
+            "GPG-encrypted key file for key '{}' has no version-0 key entry",
             sanitize_for_display(key_name)
         )));
     }
@@ -254,4 +254,55 @@ fn find_gpg_files(dir: &std::path::Path) -> Vec<PathBuf> {
         }
     }
     files
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A serialized key file containing a single entry with `version`.
+    fn key_bytes(version: u32, name: Option<&str>) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"\x00GITCRYPTKEY");
+        b.extend_from_slice(&2u32.to_be_bytes());
+        if let Some(n) = name {
+            b.extend_from_slice(&1u32.to_be_bytes());
+            b.extend_from_slice(&(n.len() as u32).to_be_bytes());
+            b.extend_from_slice(n.as_bytes());
+        }
+        b.extend_from_slice(&0u32.to_be_bytes());
+        for (id, data) in [
+            (1u32, version.to_be_bytes().to_vec()),
+            (3, vec![0x11; 32]),
+            (5, vec![0x22; 64]),
+        ] {
+            b.extend_from_slice(&id.to_be_bytes());
+            b.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            b.extend_from_slice(&data);
+        }
+        b.extend_from_slice(&0u32.to_be_bytes());
+        b
+    }
+
+    fn load(bytes: &[u8]) -> KeyFile {
+        KeyFile::load(&mut Cursor::new(bytes)).unwrap()
+    }
+
+    #[test]
+    fn accepts_version_zero_default_key() {
+        assert!(validate_collaborator_key(&load(&key_bytes(0, None)), "default").is_ok());
+    }
+
+    #[test]
+    fn rejects_key_without_version_zero_entry() {
+        let err = validate_collaborator_key(&load(&key_bytes(1, None)), "default").unwrap_err();
+        assert!(err.to_string().contains("version-0"), "{err}");
+    }
+
+    #[test]
+    fn rejects_key_name_mismatch() {
+        assert!(validate_collaborator_key(&load(&key_bytes(0, Some("ops"))), "default").is_err());
+        assert!(validate_collaborator_key(&load(&key_bytes(0, None)), "ops").is_err());
+        assert!(validate_collaborator_key(&load(&key_bytes(0, Some("ops"))), "ops").is_ok());
+    }
 }

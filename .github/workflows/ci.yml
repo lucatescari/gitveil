@@ -98,6 +98,10 @@ jobs:
       - name: Cross-compatibility tests
         run: cargo test --test cross_compat
 
+      - name: Security regression tests
+        # Tamper detection, path/filename handling and GPG trust checks.
+        run: cargo test --test security_filters --test security_git --test security_gpg
+
   msrv:
     name: MSRV (rust-version)
     runs-on: ubuntu-latest
