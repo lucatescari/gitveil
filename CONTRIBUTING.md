@@ -6,7 +6,7 @@ Thanks for your interest in contributing to gitveil! This document covers what y
 
 ### Prerequisites
 
-- **Rust** (stable, 1.70+): install via [rustup](https://rustup.rs/)
+- **Rust** (stable, 1.89+ — the `rust-version` in Cargo.toml, checked in CI): install via [rustup](https://rustup.rs/)
 - **Git** (2.20+)
 - **git-crypt** (optional, needed for cross-compatibility tests)
 - **GPG** (optional, only needed for GPG-related features)
@@ -25,7 +25,7 @@ cargo build
 cargo test
 ```
 
-All 138 tests should pass (57 unit + 56 integration + 19 GPG integration + 6 cross-compatibility). They cover:
+All 235 tests should pass (109 unit + 56 integration + 19 GPG integration + 6 cross-compatibility + 10 security filters + 15 security git + 20 security GPG). On Windows, Unix-only cases (symlinks, control characters in filenames) are compiled out. They cover:
 - AES-256-CTR encryption/decryption round-trips
 - HMAC-SHA1 known-answer vectors (RFC 2202)
 - Randomness: buffer fully filled, successive draws differ, empty buffer is a no-op (unit)
@@ -59,6 +59,11 @@ All 138 tests should pass (57 unit + 56 integration + 19 GPG integration + 6 cro
 - GPG decrypt command builder: never passes `--batch` (suppresses pinentry) (unit)
 - GPG multi-user: add 2 users, remove 1, verify count (GPG integration)
 - Cross-tool: key exchange, encrypt/decrypt, named keys, binary files (cross-compatibility)
+- Tamper detection: flipped ciphertext/nonce bits, wrong key, truncated body and nonce are rejected by smudge and diff with no plaintext emitted, including a tampered blob through `git cat-file --filters`; constant-time nonce verification (unit + security filters)
+- `git diff` textconv for default and named keys; `-k/--key-name` path traversal rejected on every command (security filters)
+- Zeroizing read-to-end growth and size limits; strict key-file parsing (missing end markers, truncated field ids) (unit)
+- Lock/unlock from a subdirectory cover the whole repo; filenames with non-ASCII, spaces, leading dash, glob characters, quotes and newlines; status from subdirectories and with newline names; unlock refuses a dirty tracked tree (security git)
+- Hostile `.git-crypt/` content: planted literal, compressed, armored, symmetric, oversized and wrongly named key files rejected by unlock; ambiguous user IDs; multi-key `--from` files; symlinked `.git-crypt` paths; rm-gpg-user commits only its own change; ls-gpg-users on malformed filenames and escape sequences (security GPG)
 
 The cross-compatibility tests (`tests/cross_compat.rs`) verify interoperability with
 git-crypt. They skip automatically when git-crypt is not installed.
@@ -96,6 +101,9 @@ tests/
   integration.rs      E2E tests using temporary git repos
   gpg_integration.rs  GPG user management tests (add/rm/ls, unlock via GPG)
   cross_compat.rs     Cross-tool tests against git-crypt
+  security_filters.rs Tamper detection, textconv, key-name validation (via binary)
+  security_git.rs     Lock/unlock/status path handling (subdirs, odd filenames)
+  security_gpg.rs     Hostile .git-crypt/ content and GPG trust checks
 benchmark/
   bench.sh              Status command scaling by file count
   bench_large_files.sh  Status with large binary files (Unity-like repos)
@@ -103,7 +111,7 @@ benchmark/
 scripts/
   release.sh      Automated release + Homebrew formula update
 .github/
-  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test, cargo audit, cargo deny)
+  workflows/ci.yml  GitHub Actions CI (fmt, clippy, test, MSRV, cargo audit, cargo deny)
   dependabot.yml    Weekly cargo + github-actions dependency updates
 deny.toml           cargo-deny policy (licenses, duplicate versions, sources)
 ```
