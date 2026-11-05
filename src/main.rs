@@ -1,3 +1,7 @@
+// Key material and plaintext handling must stay in safe Rust. Test-only
+// environment manipulation opts out locally with `#[allow(unsafe_code)]`.
+#![deny(unsafe_code)]
+
 mod cli;
 mod commands;
 mod config;
@@ -24,6 +28,16 @@ use key::key_file::KeyFile;
 
 fn main() {
     let cli = Cli::parse();
+
+    // `-k/--key-name` is joined into filesystem paths (.git/git-crypt/keys/<name>,
+    // .git-crypt/keys/<name>/...) by every command. Reject anything outside the
+    // key-name character set (e.g. `../x`) once, here, before any command runs.
+    if let Some(name) = cli.command.key_name() {
+        if let Err(e) = key::key_file::validate_existing_key_name(name) {
+            eprintln!("{} {}", "error:".red().bold(), e);
+            process::exit(1);
+        }
+    }
     let quiet = cli.quiet;
 
     let result = match cli.command {
@@ -88,7 +102,16 @@ fn main() {
 
         Commands::Smudge { key_name } => run_smudge(key_name.as_deref()),
 
-        Commands::Diff { key_name, file } => run_diff(key_name.as_deref(), file),
+        Commands::Diff { key_name, file } => match file {
+            Some(file) => run_diff(key_name.as_deref(), file),
+            // Single positional: it is the file, default key (git textconv).
+            None => match key_name {
+                Some(file) => run_diff(None, PathBuf::from(file)),
+                None => Err(error::GitVeilError::Other(
+                    "diff command requires a file path".into(),
+                )),
+            },
+        },
     };
 
     if let Err(e) = result {
@@ -126,12 +149,9 @@ fn run_smudge(key_name: Option<&str>) -> Result<(), error::GitVeilError> {
     filter::smudge::smudge(&mut stdin, &mut stdout, &kf)
 }
 
-fn run_diff(key_name: Option<&str>, file: Option<PathBuf>) -> Result<(), error::GitVeilError> {
+fn run_diff(key_name: Option<&str>, file_path: PathBuf) -> Result<(), error::GitVeilError> {
     let key_name = key_name.unwrap_or(DEFAULT_KEY_NAME);
     let kf = load_key_file(key_name)?;
-
-    let file_path =
-        file.ok_or_else(|| error::GitVeilError::Other("diff command requires a file path".into()))?;
 
     let mut stdout = io::stdout().lock();
     filter::diff::diff(&file_path, &mut stdout, &kf)

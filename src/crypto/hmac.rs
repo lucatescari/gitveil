@@ -37,6 +37,25 @@ pub fn derive_nonce(hmac_key: &[u8; HMAC_KEY_LEN], plaintext: &[u8]) -> [u8; NON
     nonce
 }
 
+/// Incremental form of [`verify_nonce`], for checking plaintext produced
+/// chunk by chunk without holding all of it in memory.
+pub struct NonceVerifier(HmacSha1);
+
+impl NonceVerifier {
+    pub fn new(hmac_key: &[u8; HMAC_KEY_LEN]) -> Self {
+        NonceVerifier(HmacSha1::new_from_slice(hmac_key).expect("HMAC-SHA1 accepts any key length"))
+    }
+
+    pub fn update(&mut self, plaintext_chunk: &[u8]) {
+        self.0.update(plaintext_chunk);
+    }
+
+    /// Constant-time comparison of the leftmost 12 tag bytes with `nonce`.
+    pub fn verify(self, nonce: &[u8; NONCE_LEN]) -> bool {
+        self.0.verify_truncated_left(nonce).is_ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +73,39 @@ mod tests {
             0x8c, 0x8e, 0xf1, 0x46, 0xbe, 0x00,
         ];
         assert_eq!(result, expected);
+    }
+
+    fn verifies(key: &[u8; HMAC_KEY_LEN], data: &[u8], nonce: &[u8; NONCE_LEN]) -> bool {
+        let mut v = NonceVerifier::new(key);
+        v.update(data);
+        v.verify(nonce)
+    }
+
+    #[test]
+    fn test_verifier_rejects_modified_data_nonce_or_key() {
+        let key = [7u8; HMAC_KEY_LEN];
+        let nonce = derive_nonce(&key, b"payload");
+        assert!(verifies(&key, b"payload", &nonce));
+        assert!(!verifies(&key, b"paYload", &nonce));
+        let mut bad = nonce;
+        bad[11] ^= 1;
+        assert!(!verifies(&key, b"payload", &bad));
+        assert!(!verifies(&[8u8; HMAC_KEY_LEN], b"payload", &nonce));
+    }
+
+    #[test]
+    fn test_nonce_verifier_matches_one_shot() {
+        let key = [9u8; HMAC_KEY_LEN];
+        let data = b"chunked plaintext that is split";
+        let nonce = derive_nonce(&key, data);
+        let mut v = NonceVerifier::new(&key);
+        for chunk in data.chunks(5) {
+            v.update(chunk);
+        }
+        assert!(v.verify(&nonce));
+        let mut v = NonceVerifier::new(&key);
+        v.update(b"different");
+        assert!(!v.verify(&nonce));
     }
 
     #[test]

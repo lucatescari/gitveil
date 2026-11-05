@@ -1,9 +1,9 @@
 use std::io::{Cursor, Read, Write};
-use zeroize::Zeroizing;
 
 use crate::constants::*;
 use crate::crypto::aes_ctr;
 use crate::crypto::hmac::derive_nonce;
+use crate::crypto::secure_buf::read_to_end_zeroizing;
 use crate::error::GitVeilError;
 use crate::key::key_file::KeyFile;
 
@@ -29,8 +29,11 @@ pub fn clean(
     // usage is proportional to file size. For very large files (multi-GiB), this
     // could be problematic; a future optimization could stream the HMAC computation
     // and then re-read from a temp file for encryption.
-    let mut plaintext = Zeroizing::new(Vec::new());
-    input.read_to_end(&mut plaintext)?;
+    //
+    // `read_to_end_zeroizing` also scrubs every intermediate buffer as it
+    // grows, and refuses input past git-crypt's MAX_CRYPT_BYTES *before*
+    // anything is written, so the counter can never wrap mid-stream.
+    let plaintext = read_to_end_zeroizing(input, MAX_CRYPT_BYTES)?;
 
     // Derive deterministic nonce from HMAC-SHA1
     let nonce = derive_nonce(&entry.hmac_key, &plaintext);

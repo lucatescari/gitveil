@@ -1,9 +1,10 @@
 use aes::Aes256;
 use cipher::{KeyIvInit, StreamCipher};
 use ctr::Ctr32BE;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
+use zeroize::Zeroizing;
 
-use crate::constants::{AES_KEY_LEN, NONCE_LEN, STREAM_BUFFER_SIZE};
+use crate::constants::{AES_KEY_LEN, MAX_CRYPT_BYTES, NONCE_LEN, STREAM_BUFFER_SIZE};
 use crate::error::GitVeilError;
 
 type Aes256Ctr = Ctr32BE<Aes256>;
@@ -18,6 +19,8 @@ type Aes256Ctr = Ctr32BE<Aes256>;
 ///
 /// - CTR mode provides **confidentiality only**, not integrity. An attacker
 ///   can flip bits in ciphertext to flip corresponding plaintext bits.
+///   Decryption must therefore go through `filter::decrypt`, which checks
+///   the HMAC-SHA1 nonce before any plaintext is released.
 /// - The 4-byte counter limits encryption to 2^32 blocks (64 GiB per file).
 /// - Nonce reuse with the same key completely breaks confidentiality.
 ///   This tool derives nonces deterministically from HMAC-SHA1 of the plaintext,
@@ -28,24 +31,51 @@ pub fn process_stream(
     aes_key: &[u8; AES_KEY_LEN],
     nonce: &[u8; NONCE_LEN],
 ) -> Result<(), GitVeilError> {
-    // Construct the 16-byte IV: 12-byte nonce + 4-byte counter starting at 0
-    let mut iv = [0u8; 16];
-    iv[..NONCE_LEN].copy_from_slice(nonce);
-    // Last 4 bytes are already 0 (counter = 0)
+    let mut cipher = new_cipher(aes_key, nonce);
 
-    let mut cipher = Aes256Ctr::new(aes_key.into(), &iv.into());
-
-    let mut buf = [0u8; STREAM_BUFFER_SIZE];
+    // The buffer holds plaintext (on encrypt input / decrypt output), so it is
+    // scrubbed when it goes out of scope on every path, including errors.
+    let mut buf = Zeroizing::new([0u8; STREAM_BUFFER_SIZE]);
     loop {
-        let n = input.read(&mut buf).map_err(GitVeilError::Io)?;
-        if n == 0 {
-            break;
-        }
-        cipher.apply_keystream(&mut buf[..n]);
+        let n = match input.read(&mut buf[..]) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => return Err(GitVeilError::Io(e)),
+        };
+        apply(&mut cipher, &mut buf[..n])?;
         output.write_all(&buf[..n]).map_err(GitVeilError::Io)?;
     }
 
     Ok(())
+}
+
+/// A CTR keystream positioned at block 0, for chunked processing.
+pub struct CtrStream(Aes256Ctr);
+
+impl CtrStream {
+    pub fn new(aes_key: &[u8; AES_KEY_LEN], nonce: &[u8; NONCE_LEN]) -> Self {
+        CtrStream(new_cipher(aes_key, nonce))
+    }
+
+    pub fn apply(&mut self, data: &mut [u8]) -> Result<(), GitVeilError> {
+        apply(&mut self.0, data)
+    }
+}
+
+fn new_cipher(aes_key: &[u8; AES_KEY_LEN], nonce: &[u8; NONCE_LEN]) -> Aes256Ctr {
+    // 16-byte IV: 12-byte nonce + 4-byte big-endian counter starting at 0.
+    let mut iv = Zeroizing::new([0u8; 16]);
+    iv[..NONCE_LEN].copy_from_slice(nonce);
+    Aes256Ctr::new(aes_key.into(), (&*iv).into())
+}
+
+/// Apply the keystream, failing (instead of panicking) once the 32-bit block
+/// counter would wrap — past that point CTR would reuse keystream.
+fn apply(cipher: &mut Aes256Ctr, data: &mut [u8]) -> Result<(), GitVeilError> {
+    cipher
+        .try_apply_keystream(data)
+        .map_err(|_| GitVeilError::InputTooLarge(MAX_CRYPT_BYTES))
 }
 
 #[cfg(test)]

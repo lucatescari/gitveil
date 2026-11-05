@@ -3,8 +3,8 @@ use std::io::{self, BufReader, Write};
 use std::path::Path;
 
 use crate::constants::*;
-use crate::crypto::aes_ctr;
 use crate::error::GitVeilError;
+use crate::filter::decrypt::decrypt_verified;
 use crate::key::key_file::KeyFile;
 
 /// Run the diff/textconv filter: decrypt a file and write plaintext to stdout.
@@ -19,36 +19,33 @@ pub fn diff(
     let file = File::open(file_path)?;
     let mut reader = BufReader::new(file);
 
-    // Read header
+    // Read header (loop: a short file is valid, just not encrypted)
     let mut header = [0u8; ENCRYPTED_FILE_HEADER_LEN];
-    match io::Read::read_exact(&mut reader, &mut header) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            // File shorter than header — not encrypted, pass through
-            return Ok(());
+    let mut got = 0;
+    while got < ENCRYPTED_FILE_HEADER_LEN {
+        match io::Read::read(&mut reader, &mut header[got..]) {
+            Ok(0) => break,
+            Ok(n) => got += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(GitVeilError::Io(e)),
         }
-        Err(e) => return Err(GitVeilError::Io(e)),
     }
 
-    if header != ENCRYPTED_FILE_HEADER {
-        // Not encrypted — pass through
-        output.write_all(&header)?;
+    if got < ENCRYPTED_FILE_HEADER_LEN || header != ENCRYPTED_FILE_HEADER {
+        // Not encrypted — pass through everything, including a file shorter
+        // than the header (previously dropped, which hid such changes in diffs).
+        output.write_all(&header[..got])?;
         io::copy(&mut reader, output)?;
+        output.flush()?;
         return Ok(());
     }
-
-    let entry = key_file.latest().ok_or(GitVeilError::NoKeyEntries)?;
 
     // Read nonce
     let mut nonce = [0u8; NONCE_LEN];
     io::Read::read_exact(&mut reader, &mut nonce)
         .map_err(|_| GitVeilError::InvalidEncryptedHeader)?;
 
-    // Decrypt
-    aes_ctr::process_stream(&mut reader, output, &entry.aes_key, &nonce)?;
-
-    output.flush()?;
-    Ok(())
+    decrypt_verified(&mut reader, output, key_file, &nonce)
 }
 
 #[cfg(test)]
@@ -98,5 +95,37 @@ mod tests {
         assert_eq!(output, plaintext);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_diff_passthrough_short_file() {
+        let kf = KeyFile::generate();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("short.txt");
+        std::fs::write(&p, b"abc").unwrap();
+        let mut output = Vec::new();
+        diff(&p, &mut output, &kf).unwrap();
+        assert_eq!(output, b"abc");
+    }
+
+    #[test]
+    fn test_diff_rejects_tampered_file() {
+        let kf = KeyFile::generate();
+        let mut encrypted = Vec::new();
+        clean::clean(
+            &mut Cursor::new(b"top secret".as_slice()),
+            &mut encrypted,
+            &kf,
+        )
+        .unwrap();
+        let last = encrypted.len() - 1;
+        encrypted[last] ^= 0x20;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.bin");
+        std::fs::write(&p, &encrypted).unwrap();
+        let mut output = Vec::new();
+        let err = diff(&p, &mut output, &kf).unwrap_err();
+        assert!(matches!(err, GitVeilError::TamperedFile));
+        assert!(output.is_empty());
     }
 }

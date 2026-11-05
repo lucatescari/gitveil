@@ -33,6 +33,17 @@ pub enum GitVeilError {
     #[error("Encrypted file has invalid header")]
     InvalidEncryptedHeader,
 
+    /// The HMAC of the decrypted plaintext does not match the nonce stored in
+    /// the file header: the ciphertext was modified, or the wrong key is in use.
+    #[error(
+        "encrypted file has been tampered with, or was encrypted with a different key \
+         (HMAC mismatch); refusing to output it"
+    )]
+    TamperedFile,
+
+    #[error("input is larger than the {0}-byte limit")]
+    InputTooLarge(u64),
+
     #[error("No key entries found")]
     NoKeyEntries,
 

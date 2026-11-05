@@ -49,6 +49,23 @@ pub fn is_working_tree_clean() -> Result<bool, GitVeilError> {
     Ok(output.stdout.is_empty())
 }
 
+/// Check if tracked files are clean, ignoring untracked files. This is
+/// git-crypt's `unlock` check (`git status -uno --porcelain`): untracked
+/// files cannot be clobbered by the forced checkout, but uncommitted edits
+/// to tracked files can.
+pub fn is_tracked_tree_clean() -> Result<bool, GitVeilError> {
+    let output = Command::new("git")
+        .args(["status", "-uno", "--porcelain"])
+        .output()
+        .map_err(|e| GitVeilError::Git(format!("failed to run git status: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(GitVeilError::Git("git status failed".into()));
+    }
+
+    Ok(output.stdout.is_empty())
+}
+
 /// Get the path where keys are stored for a given key name.
 /// Keys are stored in .git/git-crypt/keys/<keyname>
 pub fn key_path(git_dir: &Path, key_name: &str) -> PathBuf {
@@ -61,38 +78,59 @@ pub fn git_crypt_dir(repo_root: &Path) -> PathBuf {
     repo_root.join(".git-crypt")
 }
 
-/// List files that have the git-crypt filter attribute set.
-/// Uses `git check-attr --stdin` to batch-check all files in a single subprocess.
-pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> {
-    let filter_name = if key_name == "default" {
-        "git-crypt".to_string()
-    } else {
-        format!("git-crypt-{}", key_name)
-    };
-
-    // Get all tracked files
-    let ls_output = Command::new("git")
-        .args(["ls-files"])
+/// Run a git command whose output is a NUL-delimited list (e.g.
+/// `ls-files -z`) in `dir` (or the cwd when `None`), returning each
+/// non-empty entry as raw bytes.
+///
+/// NUL delimiting is essential: without `-z`, git C-quotes names containing
+/// non-ASCII bytes, quotes, backslashes or newlines (`core.quotePath`), and
+/// line splitting breaks on embedded newlines.
+pub fn git_nul_list(dir: Option<&Path>, args: &[&str]) -> Result<Vec<Vec<u8>>, GitVeilError> {
+    let mut cmd = Command::new("git");
+    cmd.args(args);
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let out = cmd
         .output()
-        .map_err(|e| GitVeilError::Git(format!("failed to run git ls-files: {}", e)))?;
+        .map_err(|e| GitVeilError::Git(format!("failed to run git {:?}: {}", args, e)))?;
 
-    if !ls_output.status.success() {
-        return Err(GitVeilError::Git("git ls-files failed".into()));
+    if !out.status.success() {
+        return Err(GitVeilError::Git(format!("git {:?} failed", args)));
     }
 
-    let all_files_str = String::from_utf8_lossy(&ls_output.stdout);
-    let all_files: Vec<&str> = all_files_str.lines().filter(|l| !l.is_empty()).collect();
+    Ok(out
+        .stdout
+        .split(|&b| b == 0)
+        .filter(|c| !c.is_empty())
+        .map(|c| c.to_vec())
+        .collect())
+}
 
-    if all_files.is_empty() {
+/// A `(path, attribute value)` pair from `git check-attr`, as raw bytes.
+pub type PathAttr = (Vec<u8>, Vec<u8>);
+
+/// Resolve the `filter` attribute of each path with a single
+/// `git check-attr -z --stdin` run in `dir` (or the cwd when `None`); paths
+/// are interpreted relative to that directory. Returns `(path, value)`
+/// pairs in git's output order.
+pub fn batch_check_filter_attr(
+    dir: Option<&Path>,
+    paths: Vec<Vec<u8>>,
+) -> Result<Vec<PathAttr>, GitVeilError> {
+    if paths.is_empty() {
         return Ok(Vec::new());
     }
 
-    // Batch check attributes using -z --stdin (NUL-delimited, single subprocess)
-    let mut child = Command::new("git")
-        .args(["check-attr", "-z", "filter", "--stdin"])
+    let mut cmd = Command::new("git");
+    cmd.args(["check-attr", "-z", "--stdin", "filter"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| GitVeilError::Git(format!("failed to run git check-attr: {}", e)))?;
 
@@ -103,11 +141,10 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
 
     // Write paths on a separate thread to avoid pipe deadlock when the
     // number of files is large enough to overflow the OS pipe buffer.
-    let paths: Vec<String> = all_files.iter().map(|f| f.to_string()).collect();
     let writer_thread = thread::spawn(move || {
         let mut stdin = stdin;
-        for file in &paths {
-            if write!(stdin, "{}\0", file).is_err() {
+        for path in &paths {
+            if stdin.write_all(path).is_err() || stdin.write_all(b"\0").is_err() {
                 break;
             }
         }
@@ -123,20 +160,70 @@ pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> 
         return Err(GitVeilError::Git("git check-attr -z --stdin failed".into()));
     }
 
-    // NUL-delimited output format: path\0attr\0value\0 (repeating triplets)
+    // NUL-delimited output: path\0attr\0value\0 (repeating triplets). The
+    // trailing NUL yields one empty final field, which the bound skips.
     let fields: Vec<&[u8]> = output.stdout.split(|&b| b == 0).collect();
-    let mut encrypted_files = Vec::new();
-
+    let mut result = Vec::new();
     let mut i = 0;
     while i + 2 < fields.len() {
-        let path = String::from_utf8_lossy(fields[i]);
-        let value = String::from_utf8_lossy(fields[i + 2]);
-
-        if value == filter_name {
-            encrypted_files.push(path.to_string());
-        }
-
+        result.push((fields[i].to_vec(), fields[i + 2].to_vec()));
         i += 3;
+    }
+    Ok(result)
+}
+
+/// Git filter name for a key name.
+fn filter_name_for(key_name: &str) -> String {
+    if key_name == "default" {
+        "git-crypt".to_string()
+    } else {
+        format!("git-crypt-{}", key_name)
+    }
+}
+
+/// List tracked files that have the git-crypt filter attribute for
+/// `key_name`, as paths relative to the repository root.
+///
+/// Git runs from the repository root so the result covers the whole working
+/// tree regardless of the caller's cwd: `lock` removes the key for the whole
+/// repository, so it must re-check-out every encrypted file, not only those
+/// under the current directory. Pass the result to
+/// [`crate::git::checkout::force_checkout_files`], which also works from the
+/// repository root.
+/// Read the raw (unfiltered) index blob for a repo-root-relative path.
+/// Returns `None` if the path has no blob in the index.
+pub fn read_index_blob(repo_root: &Path, path: &str) -> Result<Option<Vec<u8>>, GitVeilError> {
+    let output = Command::new("git")
+        .args(["cat-file", "blob", &format!(":{path}")])
+        .current_dir(repo_root)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|e| GitVeilError::Git(format!("failed to run git cat-file: {}", e)))?;
+    Ok(output.status.success().then_some(output.stdout))
+}
+
+pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> {
+    let repo_root = find_repo_root()?;
+    let filter_name = filter_name_for(key_name);
+
+    let all_files = git_nul_list(Some(&repo_root), &["ls-files", "-z", "--full-name"])?;
+    let attrs = batch_check_filter_attr(Some(&repo_root), all_files)?;
+
+    let mut encrypted_files = Vec::new();
+    for (path, value) in attrs {
+        if value != filter_name.as_bytes() {
+            continue;
+        }
+        // Refuse rather than mangle: a lossily-decoded name would not match
+        // the file on disk, so it would silently stay plaintext on lock.
+        // Lock calls this before it changes any state.
+        let path = String::from_utf8(path).map_err(|e| {
+            GitVeilError::Git(format!(
+                "encrypted file has a non-UTF-8 name, which is not supported: {}",
+                String::from_utf8_lossy(e.as_bytes()).escape_default()
+            ))
+        })?;
+        encrypted_files.push(path);
     }
 
     Ok(encrypted_files)

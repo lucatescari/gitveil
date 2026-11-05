@@ -6,7 +6,8 @@ use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::repo::{find_repo_root, git_crypt_dir};
 use crate::gpg::display::sanitize_for_display;
-use crate::gpg::operations::gpg_get_fingerprints;
+use crate::gpg::operations::gpg_get_primary_fingerprint;
+use crate::gpg::safe_path::ensure_no_symlink_components;
 
 /// Remove a GPG user's access by deleting their encrypted key file.
 ///
@@ -23,6 +24,9 @@ pub fn rm_gpg_user(
     let crypt_dir = git_crypt_dir(&repo_root);
 
     let keys_dir = crypt_dir.join("keys").join(key_name).join("0");
+    // A symlinked `.git-crypt`, key or version directory committed to the
+    // repo would otherwise make us delete a file outside the repository.
+    ensure_no_symlink_components(&repo_root, &keys_dir)?;
     if !keys_dir.is_dir() {
         return Err(GitVeilError::Other(format!(
             "No GPG users configured for key '{}'.",
@@ -30,34 +34,38 @@ pub fn rm_gpg_user(
         )));
     }
 
-    // Resolve GPG user ID to fingerprint(s)
-    let fingerprints = gpg_get_fingerprints(gpg_user_id)?;
+    // Resolve the GPG user ID to exactly one primary fingerprint. Like
+    // git-crypt, an ID matching several keys is an error rather than a
+    // guess about whose access to revoke.
+    let fp = gpg_get_primary_fingerprint(gpg_user_id)?;
 
     let mut removed_any = false;
     let mut removed_path = None;
 
-    for fp in &fingerprints {
-        let gpg_file = keys_dir.join(format!("{}.gpg", fp));
-        if gpg_file.exists() {
-            std::fs::remove_file(&gpg_file)?;
-            removed_path = Some(gpg_file);
-            removed_any = true;
-            eprintln!(
-                "{} GPG user {} (fingerprint: {}) from key '{}'.",
-                "Removed".red().bold(),
-                sanitize_for_display(gpg_user_id).bold(),
-                if fp.len() >= 16 { &fp[..16] } else { fp }.dimmed(),
-                key_name.bold()
-            );
-            break;
-        }
+    let gpg_file = keys_dir.join(format!("{}.gpg", fp));
+    ensure_no_symlink_components(&repo_root, &gpg_file)?;
+    if std::fs::symlink_metadata(&gpg_file)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+    {
+        std::fs::remove_file(&gpg_file)?;
+        removed_path = Some(gpg_file);
+        removed_any = true;
+        eprintln!(
+            "{} GPG user {} (fingerprint: {}) from key '{}'.",
+            "Removed".red().bold(),
+            sanitize_for_display(gpg_user_id).bold(),
+            fp[..16].dimmed(),
+            key_name.bold()
+        );
     }
 
     if !removed_any {
         return Err(GitVeilError::Other(format!(
             "No encrypted key found for '{}' under key '{}'. \
              Use 'gitveil ls-gpg-users' to see current users.",
-            gpg_user_id, key_name
+            sanitize_for_display(gpg_user_id),
+            key_name
         )));
     }
 
@@ -82,8 +90,11 @@ pub fn rm_gpg_user(
                 safe_user_id, key_name
             );
 
+            // Commit only the removed key file: without a pathspec, `git
+            // commit` would also sweep in whatever else the user had staged.
             let status = Command::new("git")
-                .args(["commit", "-m", &commit_msg])
+                .args(["commit", "-m", &commit_msg, "--"])
+                .arg(path)
                 .status()
                 .map_err(|e| GitVeilError::Git(format!("failed to commit: {}", e)))?;
 

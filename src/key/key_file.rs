@@ -5,6 +5,7 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use crate::constants::*;
+use crate::crypto::secure_buf::read_to_end_zeroizing;
 use crate::error::GitVeilError;
 use crate::key::entry::KeyEntry;
 use crate::key::format::{is_critical_field, read_field, write_end_field, write_field};
@@ -49,6 +50,16 @@ impl KeyFile {
         self.entries.values().next_back()
     }
 
+    /// Get the entry for a specific key version.
+    pub fn get(&self, version: u32) -> Option<&KeyEntry> {
+        self.entries.get(&version)
+    }
+
+    /// All entries, highest version first.
+    pub fn entries_newest_first(&self) -> impl Iterator<Item = &KeyEntry> {
+        self.entries.values().rev()
+    }
+
     /// Load a key file from a reader.
     pub fn load(reader: &mut dyn Read) -> Result<Self, GitVeilError> {
         // Read and verify header
@@ -76,10 +87,10 @@ impl KeyFile {
 
         // Read header fields
         loop {
-            let (field_id, data) = match read_field(reader)? {
-                Some(f) => f,
-                None => return Ok(kf),
-            };
+            // git-crypt treats EOF before the header end marker as malformed.
+            let (field_id, data) = read_field(reader)?.ok_or_else(|| {
+                GitVeilError::InvalidKeyFile("truncated header (no end marker)".into())
+            })?;
 
             match field_id {
                 HEADER_FIELD_END => break,
@@ -106,9 +117,10 @@ impl KeyFile {
         // Read remaining data and parse key entries from it.
         // KeyEntry::load reads TLV fields until KEY_FIELD_END, consuming
         // exactly one entry. We loop until the buffer is exhausted.
-        let mut remaining = Vec::new();
-        reader.read_to_end(&mut remaining)?;
-        let mut entry_reader = Cursor::new(&remaining);
+        // The remaining bytes are raw key material: read them into a buffer
+        // that is scrubbed on drop, including while it grows.
+        let remaining = read_to_end_zeroizing(reader, MAX_KEY_FILE_LEN)?;
+        let mut entry_reader = Cursor::new(&remaining[..]);
 
         while entry_reader.position() < remaining.len() as u64 {
             let entry = KeyEntry::load(&mut entry_reader)?;
@@ -120,8 +132,9 @@ impl KeyFile {
 
     /// Load a key file from a filesystem path.
     pub fn load_from_file(path: &Path) -> Result<Self, GitVeilError> {
-        let data = fs::read(path)?;
-        let mut cursor = Cursor::new(data);
+        let mut file = fs::File::open(path)?;
+        let data = read_to_end_zeroizing(&mut file, MAX_KEY_FILE_LEN)?;
+        let mut cursor = Cursor::new(&data[..]);
         Self::load(&mut cursor)
     }
 
@@ -147,79 +160,81 @@ impl KeyFile {
 
     /// Store the key file to a filesystem path with restricted permissions (0600).
     /// Key material must never be world-readable.
+    ///
+    /// The bytes go to a fresh `create_new` temp file in the same directory
+    /// (mode 0600 from the moment it exists), are fsynced, and the temp file
+    /// is then renamed over `path`. So the key is never briefly readable
+    /// through an existing looser-mode file, a symlink at `path` is replaced
+    /// rather than followed, and a crash never leaves a half-written key.
     pub fn store_to_file(&self, path: &Path) -> Result<(), GitVeilError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut buf = Vec::new();
-        self.store(&mut buf)?;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        let buf = self.to_bytes()?;
 
-        // Write with mode 0600 (owner read/write only) to protect key material.
-        #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(path)?;
+        let file_name = path
+            .file_name()
+            .ok_or_else(|| GitVeilError::Other("key path has no file name".into()))?;
+        let mut rnd = [0u8; 8];
+        crate::crypto::random::generate_random_bytes(&mut rnd);
+        let suffix: String = rnd.iter().map(|b| format!("{b:02x}")).collect();
+        let tmp = parent.join(format!(".{}.tmp-{suffix}", file_name.to_string_lossy()));
+
+        let result = (|| -> Result<(), GitVeilError> {
+            let mut file = create_new_private(&tmp)?;
             file.write_all(&buf)?;
-
-            // Enforce 0600 even if the file already existed with looser permissions.
-            // OpenOptions::mode() only applies to newly created files.
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&tmp, path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
         }
-        #[cfg(not(unix))]
-        {
-            fs::write(path, &buf)?;
-        }
-
-        Ok(())
+        result
     }
 
     /// Store the key file to a path, failing if the file already exists.
-    /// Uses `create_new(true)` for atomic create-if-not-exists to avoid TOCTOU races.
+    /// Uses `create_new(true)` for atomic create-if-not-exists to avoid TOCTOU races
+    /// (and, like `O_EXCL`, it refuses to follow a symlink at `path`).
     pub fn store_to_file_exclusive(&self, path: &Path) -> Result<(), GitVeilError> {
-        use std::io::Write;
-
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut buf = Vec::new();
-        self.store(&mut buf)?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(path)?;
-            file.write_all(&buf)?;
-        }
-        #[cfg(not(unix))]
-        {
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)?;
-            file.write_all(&buf)?;
-        }
-
+        let buf = self.to_bytes()?;
+        let mut file = create_new_private(path)?;
+        file.write_all(&buf)?;
+        file.sync_all()?;
         Ok(())
     }
 
     /// Serialize to bytes. The returned buffer is wrapped in `Zeroizing`
     /// to ensure key material is scrubbed from memory when dropped.
     pub fn to_bytes(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, GitVeilError> {
-        let mut buf = Vec::new();
-        self.store(&mut buf)?;
-        Ok(zeroize::Zeroizing::new(buf))
+        // Pre-size so `store` never reallocates: a reallocation would free a
+        // copy of the key bytes without scrubbing it.
+        let name_len = self.key_name.as_ref().map_or(0, |n| 8 + n.len());
+        let cap = KEY_FILE_HEADER_LEN + 4 + name_len + 4 + self.entries.len() * 128 + 64;
+        let mut buf = zeroize::Zeroizing::new(Vec::with_capacity(cap));
+        self.store(&mut *buf)?;
+        debug_assert!(buf.len() <= cap, "key file capacity estimate too small");
+        Ok(buf)
     }
+}
+
+/// Create a new file that only the owner can read/write, failing if anything
+/// (file or symlink) already exists at `path`.
+fn create_new_private(path: &Path) -> Result<fs::File, GitVeilError> {
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    Ok(opts.open(path)?)
 }
 
 /// Validate a key name that was read back from the filesystem or from

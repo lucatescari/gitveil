@@ -31,3 +31,5 @@ benchmark
 .mcp.json
 
 docs
+# Progress band
+.superpowers/

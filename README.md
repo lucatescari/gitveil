@@ -54,7 +54,7 @@ brew install lucatescari/gitveil/gitveil
 ```bash
 git clone https://github.com/lucatescari/gitveil.git
 cd gitveil
-cargo build --release
+cargo build --release --locked   # use the audited Cargo.lock
 cp target/release/gitveil /usr/local/bin/
 ```
 
@@ -170,6 +170,8 @@ gitveil unlock [<key-file>...]
 ```
 
 Without arguments, attempts GPG-based unlock using keys in `.git-crypt/`. With key file arguments, uses symmetric key files.
+
+Like git-crypt, unlock refuses to run while tracked files have uncommitted changes (untracked files are fine), because it re-checks-out every encrypted file. Commit or stash first. Lock and unlock always operate on the whole repository, whichever subdirectory you run them from.
 
 If your GPG private key is passphrase-protected, gitveil will let `gpg-agent` invoke pinentry to prompt you (terminal or GUI), just like `git-crypt`. Only collaborator files matching a secret key in your local keyring are tried, so pinentry fires at most once.
 
@@ -334,9 +336,25 @@ gitveil export-key -k team-backend ~/backend-key
 
 ## Security Considerations
 
-### No ciphertext integrity verification
+### Tamper detection
 
-AES-256-CTR provides confidentiality but not integrity. An attacker with push access to the repository can flip bits in the ciphertext, which flips the corresponding bits in the plaintext. The HMAC-SHA1 is used only for deterministic nonce derivation, not for authentication. There is no tamper detection on decryption. This is inherited from git-crypt's design -- adding MAC verification would break compatibility.
+AES-256-CTR on its own provides confidentiality but not integrity. The nonce, however, is HMAC-SHA1 of the plaintext, so it doubles as an authentication tag: after decrypting, gitveil recomputes the HMAC and compares it with the stored nonce in constant time, exactly like git-crypt. No format change is involved.
+
+If they differ -- the ciphertext was modified, or the file was encrypted under a different key -- the smudge/diff filter fails with `encrypted file has been tampered with` and **outputs nothing**. (git-crypt streams the plaintext first and then exits non-zero; gitveil decrypts into memory and only releases verified plaintext.) Git then reports the filter failure instead of checking out altered content.
+
+A file in an encrypted path that is **not** encrypted at all is passed through, as git-crypt does, but with a warning on stderr: it means a secret was committed in plaintext, or someone without the key replaced it. Run `gitveil status` to find such files.
+
+### Hostile repository content
+
+Everything under `.git-crypt/` is repository content that anyone with push access can change. gitveil treats it as untrusted:
+
+- `unlock` only accepts a `.gpg` key file that gpg reports as genuinely public-key encrypted to your key (`--status-file`: `DECRYPTION_OKAY`, no passphrase-only or plain literal packets), caps its size, and checks that the decrypted key carries the expected key name and a version-0 entry. Because anyone can encrypt a key *to* your public key, unlock also decrypts and HMAC-verifies an existing encrypted file with the candidate key before installing it; a key that does not fit the repository is skipped (the next collaborator file is tried) and nothing in the working tree is touched. The same check rejects a wrong key file passed to `unlock <key-file>`.
+- `add-gpg-user` / `rm-gpg-user` refuse to write or delete through symlinks committed under `.git-crypt/`.
+- A user ID that matches more than one public key is an error, not a silent first match; `--from` rejects files containing more than one key and imports only the previewed one.
+- Key names (from `-k` or from the repository) are restricted to `[A-Za-z0-9_-]`, so they cannot escape `.git/git-crypt/keys/` or inject into git filter commands.
+- Filenames, key names and GPG user IDs are stripped of terminal control sequences before being printed.
+
+Limits: in a repository with no encrypted files committed yet there is nothing to verify a key against. And a collaborator who already has push access can still add their own GPG key for themselves; review changes to `.git-crypt/` like any other access-control change.
 
 ### Trust model for `gpg.program`
 
@@ -344,7 +362,7 @@ Gitveil respects the `gpg.program` git config setting, which means the GPG binar
 
 ### Large file memory usage
 
-The clean filter must read the entire file into memory to compute the HMAC-SHA1 nonce before encryption can begin. Very large files (multi-GiB) may cause high memory usage.
+The clean filter must read the entire file into memory to compute the HMAC-SHA1 nonce before encryption can begin, and smudge/diff buffer the (non-secret) ciphertext so its HMAC can be verified before any plaintext is written -- roughly 1x the file size, where git-crypt streams. Very large files (multi-GiB) may cause high memory usage. Files of 64 GiB or more are refused, as in git-crypt (the AES-CTR block counter would wrap). Plaintext buffers are zeroized when freed and never spill to disk.
 
 ## Project Structure
 
@@ -357,7 +375,8 @@ src/
   error.rs             # Error types
   crypto/
     aes_ctr.rs          # AES-256-CTR encryption
-    hmac.rs             # HMAC-SHA1 nonce derivation
+    hmac.rs             # HMAC-SHA1 nonce derivation + constant-time verify
+    secure_buf.rs       # Zeroizing read-to-end for secrets
     random.rs           # Secure random generation
   key/
     format.rs           # TLV field serialization
@@ -365,6 +384,7 @@ src/
     key_file.rs         # Multi-version key file container
   filter/
     clean.rs            # Encrypt on git add
+    decrypt.rs          # Authenticated decrypt (HMAC check) for smudge/diff
     smudge.rs           # Decrypt on git checkout
     diff.rs             # Decrypt for git diff
   commands/
@@ -384,6 +404,7 @@ src/
   gpg/
     operations.rs       # GPG encrypt/decrypt via subprocess
     import.rs           # Import GPG keys from files/URLs
+    safe_path.rs        # Refuse symlinks under .git-crypt/ before writing
 benchmark/               # Performance benchmarks (gitveil vs git-crypt)
 ```
 
