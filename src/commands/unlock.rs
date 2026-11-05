@@ -11,6 +11,7 @@ use crate::git::repo::{
     find_git_dir, find_repo_root, get_encrypted_files, git_crypt_dir, is_tracked_tree_clean,
     key_path,
 };
+use crate::gpg::display::sanitize_for_display;
 use crate::gpg::operations::{gpg_decrypt_from_file, gpg_list_secret_key_fingerprints};
 use crate::key::key_file::{validate_existing_key_name, KeyFile};
 
@@ -125,10 +126,8 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
                     continue;
                 }
 
-                match gpg_decrypt_from_file(gpg_file) {
-                    Ok(key_data) => {
-                        let mut cursor = Cursor::new(key_data.as_slice());
-                        let kf = KeyFile::load(&mut cursor)?;
+                match decrypt_collaborator_key(gpg_file, &stem, &key_name) {
+                    Ok(kf) => {
                         let kp = key_path(&git_dir, &key_name);
 
                         kf.store_to_file(&kp)?;
@@ -150,6 +149,11 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
                         break;
                     }
                     Err(e) => {
+                        eprintln!(
+                            "{} {}",
+                            "warning:".yellow().bold(),
+                            sanitize_for_display(&e.to_string())
+                        );
                         last_gpg_error = Some(format!("{}", e));
                         continue;
                     }
@@ -182,6 +186,50 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
         }
     }
 
+    Ok(())
+}
+
+/// Decrypt a collaborator key file and check it is a well-formed key for
+/// `key_name`.
+///
+/// The file is repository content, so anyone with push access could have
+/// planted it. `gpg_decrypt_from_file` only returns data that was genuinely
+/// public-key encrypted to `fingerprint` (no unencrypted literal packets,
+/// no passphrase-only messages). Like git-crypt, the decrypted key must
+/// also carry the name of the directory it was found in and must contain
+/// key material.
+fn decrypt_collaborator_key(
+    gpg_file: &std::path::Path,
+    fingerprint: &str,
+    key_name: &str,
+) -> Result<KeyFile, GitVeilError> {
+    let key_data = gpg_decrypt_from_file(gpg_file, fingerprint)?;
+    let mut cursor = Cursor::new(key_data.as_slice());
+    let kf = KeyFile::load(&mut cursor)?;
+    validate_collaborator_key(&kf, key_name)?;
+    Ok(kf)
+}
+
+/// Check a decrypted collaborator key against the directory it came from.
+fn validate_collaborator_key(kf: &KeyFile, key_name: &str) -> Result<(), GitVeilError> {
+    // `key_name()` reports an unnamed key as "default", which is exactly the
+    // name of the default key's directory.
+    if kf.key_name() != key_name {
+        return Err(GitVeilError::InvalidKeyFile(format!(
+            "GPG-encrypted key file for key '{}' is malformed because it does \
+             not contain the expected key name (found '{}')",
+            sanitize_for_display(key_name),
+            sanitize_for_display(kf.key_name())
+        )));
+    }
+    // git-crypt requires a version-0 entry here; KeyFile has no per-version
+    // accessor, so at minimum require that the key contains an entry.
+    if kf.latest().is_none() {
+        return Err(GitVeilError::InvalidKeyFile(format!(
+            "GPG-encrypted key file for key '{}' contains no key entries",
+            sanitize_for_display(key_name)
+        )));
+    }
     Ok(())
 }
 

@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
@@ -9,7 +10,8 @@ use crate::error::GitVeilError;
 use crate::git::repo::{find_git_dir, find_repo_root, git_crypt_dir, key_path};
 use crate::gpg::display::sanitize_for_display;
 use crate::gpg::import::{import_key_file, pick_keys, preview_key_file, scan_key_directory};
-use crate::gpg::operations::{gpg_encrypt_to_file, gpg_get_fingerprints};
+use crate::gpg::operations::{gpg_encrypt_to_file, gpg_get_primary_fingerprint};
+use crate::gpg::safe_path::{create_dir_all_no_symlinks, ensure_no_symlink_components};
 use crate::key::key_file::KeyFile;
 use crate::tempdir::create_private_temp_dir;
 
@@ -100,7 +102,11 @@ fn add_from_git_url(
     url: &str,
     git_dir: &Path,
 ) -> Result<(), GitVeilError> {
-    eprintln!("{} {}...", "Cloning".cyan().bold(), url.dimmed());
+    eprintln!(
+        "{} {}...",
+        "Cloning".cyan().bold(),
+        sanitize_for_display(url).dimmed()
+    );
 
     // Unpredictable, owner-only, and never adopted from an existing path:
     // the clone lands in a world-writable temp directory and its contents
@@ -112,12 +118,18 @@ fn add_from_git_url(
         .args(["clone", "--depth", "1", "--", url])
         .arg(&tmp_dir)
         .status()
-        .map_err(|e| GitVeilError::Git(format!("failed to clone {}: {}", url, e)))?;
+        .map_err(|e| {
+            GitVeilError::Git(format!(
+                "failed to clone {}: {}",
+                sanitize_for_display(url),
+                e
+            ))
+        })?;
 
     if !status.success() {
         return Err(GitVeilError::Git(format!(
             "failed to clone '{}'. Check the URL and your access.",
-            url
+            sanitize_for_display(url)
         )));
     }
 
@@ -146,7 +158,7 @@ fn add_from_path(
             sanitize_for_display(&info.uid).bold(),
             info.fingerprint.dimmed()
         );
-        import_key_file(from_path)?;
+        import_key_file(from_path, &info.fingerprint)?;
         add_by_fingerprint(
             key_name,
             no_commit,
@@ -169,7 +181,7 @@ fn add_from_path(
                 sanitize_for_display(&info.uid).bold(),
                 info.fingerprint.dimmed()
             );
-            import_key_file(&info.path)?;
+            import_key_file(&info.path, &info.fingerprint)?;
             add_by_fingerprint(
                 key_name,
                 no_commit,
@@ -197,17 +209,42 @@ fn add_single_user(
     gpg_user_id: &str,
     git_dir: &Path,
 ) -> Result<(), GitVeilError> {
-    let fingerprints = gpg_get_fingerprints(gpg_user_id)?;
-    let fingerprint = &fingerprints[0];
+    // Errors (like git-crypt) when the ID matches more than one key, rather
+    // than silently granting access to whichever key gpg listed first.
+    let fingerprint = gpg_get_primary_fingerprint(gpg_user_id)?;
 
     add_by_fingerprint(
         key_name,
         no_commit,
         trusted,
-        fingerprint,
+        &fingerprint,
         gpg_user_id,
         git_dir,
     )
+}
+
+/// Create `.git-crypt/.gitattributes` unless it already exists as a regular
+/// file. Refuses symlinks, including dangling ones.
+fn write_gitattributes_if_missing(repo_root: &Path, path: &Path) -> Result<(), GitVeilError> {
+    ensure_no_symlink_components(repo_root, path)?;
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => return Ok(()),
+        Ok(_) => {
+            return Err(GitVeilError::Other(format!(
+                "refusing to write '{}': it exists and is not a regular file",
+                path.display()
+            )))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(b"# Do not encrypt GPG-encrypted key files\n* !filter !diff\n")?;
+    Ok(())
 }
 
 /// Core logic: encrypt the repo key to a GPG fingerprint and optionally commit.
@@ -233,16 +270,21 @@ fn add_by_fingerprint(
     let gpg_key_dir = crypt_dir.join("keys").join(key_name).join("0");
     let gpg_file_path = gpg_key_dir.join(format!("{}.gpg", fingerprint));
 
+    // Everything under .git-crypt/ is repository content, and a cloned repo
+    // can commit symlinks there. Refuse to write through any of them —
+    // otherwise the encrypted key or .gitattributes could be written to an
+    // arbitrary location outside the repository.
+    let gitattributes_path = crypt_dir.join(".gitattributes");
+    ensure_no_symlink_components(&repo_root, &gpg_file_path)?;
+    ensure_no_symlink_components(&repo_root, &gitattributes_path)?;
+    create_dir_all_no_symlinks(&repo_root, &gpg_key_dir)?;
+
     gpg_encrypt_to_file(&key_data, fingerprint, &gpg_file_path, trusted)?;
 
-    // Create .gitattributes in .git-crypt to prevent encrypting GPG key files
-    let gitattributes_path = crypt_dir.join(".gitattributes");
-    if !gitattributes_path.exists() {
-        std::fs::write(
-            &gitattributes_path,
-            "# Do not encrypt GPG-encrypted key files\n* !filter !diff\n",
-        )?;
-    }
+    // Create .gitattributes in .git-crypt to prevent encrypting GPG key files.
+    // `symlink_metadata` (unlike `exists()`) sees a dangling symlink, and
+    // `create_new` never opens an existing path — link or not.
+    write_gitattributes_if_missing(&repo_root, &gitattributes_path)?;
 
     if !no_commit {
         // Stage and commit the GPG-encrypted key file

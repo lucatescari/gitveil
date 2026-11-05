@@ -5,7 +5,8 @@ use colored::Colorize;
 use crate::constants::DEFAULT_KEY_NAME;
 use crate::error::GitVeilError;
 use crate::git::repo::{find_repo_root, git_crypt_dir};
-use crate::gpg::operations::get_gpg_program;
+use crate::gpg::display::sanitize_for_display;
+use crate::gpg::operations::{get_gpg_program, validate_fingerprint};
 
 /// List GPG users who have been granted access to the repository.
 /// Scans .git-crypt/keys/<keyname>/0/ for .gpg files and resolves
@@ -63,7 +64,7 @@ fn list_users_for_key(keys_dir: &Path, key_name: &str) -> Result<(), GitVeilErro
         println!(
             "{} '{}': no GPG users",
             "Key".bold(),
-            key_name.cyan().bold()
+            sanitize_for_display(key_name).cyan().bold()
         );
         return Ok(());
     }
@@ -79,10 +80,12 @@ fn list_users_for_key(keys_dir: &Path, key_name: &str) -> Result<(), GitVeilErro
         })
         .collect();
 
+    // Key directory names are repository content: escape control
+    // characters so they cannot inject terminal escape sequences.
     let display_name = if key_name == DEFAULT_KEY_NAME {
         "default".to_string()
     } else {
-        key_name.to_string()
+        sanitize_for_display(key_name)
     };
 
     if gpg_files.is_empty() {
@@ -109,19 +112,29 @@ fn list_users_for_key(keys_dir: &Path, key_name: &str) -> Result<(), GitVeilErro
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
 
+        // The file name is repository content. Anything that is not a
+        // well-formed fingerprint is skipped: it cannot be a collaborator
+        // file, and slicing or printing it raw could panic (multibyte
+        // characters) or inject terminal escape sequences.
+        if validate_fingerprint(&fingerprint).is_err() {
+            println!(
+                "  {}  {}",
+                sanitize_for_display(&entry.file_name().to_string_lossy()).yellow(),
+                "(ignored: file name is not a GPG fingerprint)".dimmed()
+            );
+            continue;
+        }
+
         // Try to resolve fingerprint to a UID via GPG
         let uid = resolve_gpg_uid(&fingerprint);
 
-        let fp_short = if fingerprint.len() >= 16 {
-            &fingerprint[..16]
-        } else {
-            &fingerprint
-        };
+        // Validated above: ASCII hex, at least 40 characters.
+        let fp_short = &fingerprint[..16];
 
         match uid {
             Some(name) => println!(
                 "  {}  {}",
-                name.bold(),
+                sanitize_for_display(&name).bold(),
                 format!("({}...)", fp_short).dimmed()
             ),
             None => println!(
@@ -143,6 +156,7 @@ fn resolve_gpg_uid(fingerprint: &str) -> Option<String> {
             "--with-colons",
             "--batch",
             "--list-keys",
+            "--",
             &format!("0x{}", fingerprint),
         ])
         .output()
