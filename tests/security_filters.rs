@@ -282,3 +282,37 @@ fn git_diff_textconv_works_for_named_key() {
         "diff: {text}"
     );
 }
+
+#[test]
+fn symmetric_unlock_with_wrong_key_changes_nothing() {
+    let repo = make_initialized_repo();
+    let p = repo.path();
+    fs::write(
+        p.join(".gitattributes"),
+        "secret.txt filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+    fs::write(p.join("secret.txt"), "password=hunter2\n").unwrap();
+    assert_success(&git(p, &["add", "."]), "add");
+    assert_success(&git(p, &["commit", "-m", "s"]), "commit");
+    assert_success(&gitveil(p, &["lock"]), "lock");
+
+    // A key from an unrelated repository.
+    let other = make_initialized_repo();
+    let wrong = other.path().join("wrong.key");
+    assert_success(
+        &gitveil(other.path(), &["export-key", wrong.to_str().unwrap()]),
+        "export-key",
+    );
+
+    let out = gitveil(p, &["unlock", wrong.to_str().unwrap()]);
+    assert!(!out.status.success(), "wrong key must be refused");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("does not decrypt"), "stderr: {err}");
+    assert!(!p.join(".git/git-crypt/keys/default").exists());
+    let status = git(p, &["status", "--porcelain"]);
+    assert!(String::from_utf8_lossy(&status.stdout).trim().is_empty());
+    assert!(fs::read(p.join("secret.txt"))
+        .unwrap()
+        .starts_with(b"\0GITCRYPT\0"));
+}

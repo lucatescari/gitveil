@@ -190,6 +190,18 @@ fn filter_name_for(key_name: &str) -> String {
 /// under the current directory. Pass the result to
 /// [`crate::git::checkout::force_checkout_files`], which also works from the
 /// repository root.
+/// Read the raw (unfiltered) index blob for a repo-root-relative path.
+/// Returns `None` if the path has no blob in the index.
+pub fn read_index_blob(repo_root: &Path, path: &str) -> Result<Option<Vec<u8>>, GitVeilError> {
+    let output = Command::new("git")
+        .args(["cat-file", "blob", &format!(":{path}")])
+        .current_dir(repo_root)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|e| GitVeilError::Git(format!("failed to run git cat-file: {}", e)))?;
+    Ok(output.status.success().then_some(output.stdout))
+}
+
 pub fn get_encrypted_files(key_name: &str) -> Result<Vec<String>, GitVeilError> {
     let repo_root = find_repo_root()?;
     let filter_name = filter_name_for(key_name);

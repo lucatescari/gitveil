@@ -5,14 +5,16 @@ use std::path::PathBuf;
 use colored::Colorize;
 
 use crate::error::GitVeilError;
+use crate::filter::decrypt::key_decrypts_blob;
 use crate::git::checkout::force_checkout_files;
 use crate::git::config::configure_filters;
 use crate::git::repo::{
     find_git_dir, find_repo_root, get_encrypted_files, git_crypt_dir, is_tracked_tree_clean,
-    key_path,
+    key_path, read_index_blob,
 };
 use crate::gpg::display::sanitize_for_display;
 use crate::gpg::operations::{gpg_decrypt_from_file, gpg_list_secret_key_fingerprints};
+use crate::gpg::safe_path::ensure_no_symlink_components;
 use crate::key::key_file::{validate_existing_key_name, KeyFile};
 
 /// Unlock the repository: load key, configure filters, and decrypt working copy.
@@ -39,16 +41,10 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
         for key_file_path in key_files {
             let kf = KeyFile::load_from_file(key_file_path)?;
             let key_name = kf.key_name().to_string();
-            let kp = key_path(&git_dir, &key_name);
 
-            kf.store_to_file(&kp)?;
-            configure_filters(&key_name)?;
-
-            // Force checkout to decrypt files
             let files = get_encrypted_files(&key_name)?;
-            if !files.is_empty() {
-                force_checkout_files(&files)?;
-            }
+            check_key_matches_repo(&kf, &key_name, &files)?;
+            install_key(&git_dir, &kf, &key_name, &files)?;
 
             if !quiet {
                 eprintln!("{} key '{}'.", "Unlocked".green().bold(), key_name.bold());
@@ -59,11 +55,14 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
         let repo_root = find_repo_root()?;
         let crypt_dir = git_crypt_dir(&repo_root);
 
-        if !crypt_dir.exists() {
+        if std::fs::symlink_metadata(&crypt_dir).is_err() {
             return Err(GitVeilError::NotInitialized);
         }
 
+        // `.git-crypt/` is repository content: a committed symlink here
+        // would make unlock read key files from outside the repository.
         let keys_dir = crypt_dir.join("keys");
+        ensure_no_symlink_components(&repo_root, &keys_dir)?;
         if !keys_dir.is_dir() {
             return Err(GitVeilError::NotInitialized);
         }
@@ -126,17 +125,17 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
                     continue;
                 }
 
-                match decrypt_collaborator_key(gpg_file, &stem, &key_name) {
-                    Ok(kf) => {
-                        let kp = key_path(&git_dir, &key_name);
-
-                        kf.store_to_file(&kp)?;
-                        configure_filters(&key_name)?;
-
+                // Gather the file list before changing any state, and check the
+                // candidate key against real ciphertext before installing it.
+                let candidate =
+                    decrypt_collaborator_key(gpg_file, &stem, &key_name).and_then(|kf| {
                         let files = get_encrypted_files(&key_name)?;
-                        if !files.is_empty() {
-                            force_checkout_files(&files)?;
-                        }
+                        check_key_matches_repo(&kf, &key_name, &files)?;
+                        Ok((kf, files))
+                    });
+                match candidate {
+                    Ok((kf, files)) => {
+                        install_key(&git_dir, &kf, &key_name, &files)?;
 
                         if !quiet {
                             eprintln!(
@@ -186,6 +185,61 @@ pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
         }
     }
 
+    Ok(())
+}
+
+/// Store the key, configure the filters, and re-check-out the encrypted
+/// files so they are decrypted. Only called once the key has been verified.
+fn install_key(
+    git_dir: &std::path::Path,
+    kf: &KeyFile,
+    key_name: &str,
+    files: &[String],
+) -> Result<(), GitVeilError> {
+    kf.store_to_file(&key_path(git_dir, key_name))?;
+    configure_filters(key_name)?;
+    if !files.is_empty() {
+        force_checkout_files(files)?;
+    }
+    Ok(())
+}
+
+/// Check that `kf` really is this repository's key, by decrypting and
+/// HMAC-verifying the first encrypted blob found in the index.
+///
+/// A `.gpg` file that is genuinely encrypted to your public key proves
+/// nothing about *who* made it: anyone with push access can encrypt a key of
+/// their choosing to you. If gitveil installed such a key, every secret you
+/// commit afterwards would be encrypted under a key the attacker knows (and
+/// the existing files would fail to decrypt mid-checkout). The same check
+/// catches a wrong symmetric key file. git-crypt does not do this.
+///
+/// If the repository has no encrypted blobs yet there is nothing to compare
+/// against, and the key is accepted.
+fn check_key_matches_repo(
+    kf: &KeyFile,
+    key_name: &str,
+    files: &[String],
+) -> Result<(), GitVeilError> {
+    let repo_root = find_repo_root()?;
+    for path in files {
+        let Some(blob) = read_index_blob(&repo_root, path)? else {
+            continue;
+        };
+        if !blob.starts_with(crate::constants::ENCRYPTED_FILE_HEADER) {
+            // Committed in plaintext; `status` reports these.
+            continue;
+        }
+        if key_decrypts_blob(kf, &blob) {
+            return Ok(());
+        }
+        return Err(GitVeilError::InvalidKeyFile(format!(
+            "key for '{}' does not decrypt the files in this repository (checked '{}'); \
+             refusing to install it",
+            sanitize_for_display(key_name),
+            sanitize_for_display(path)
+        )));
+    }
     Ok(())
 }
 

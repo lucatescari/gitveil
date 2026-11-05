@@ -867,3 +867,129 @@ mod symlinks {
         assert!(victim.exists(), "file outside the repo must not be deleted");
     }
 }
+
+// ─── unlock: valid-but-foreign key encrypted to the victim ─────
+
+/// Commit an encrypted secret so there is real ciphertext to check keys
+/// against.
+fn commit_encrypted_secret(gpg_home: &Path, repo: &Path) {
+    let _ = gpg_home;
+    fs::write(
+        repo.join(".gitattributes"),
+        "secret.txt filter=git-crypt diff=git-crypt\n",
+    )
+    .unwrap();
+    fs::write(repo.join("secret.txt"), "password=hunter2\n").unwrap();
+    assert_success(&git(repo, &["add", ".gitattributes", "secret.txt"]), "add");
+    assert_success(&git(repo, &["commit", "-m", "secret"]), "commit secret");
+}
+
+/// Encrypt `key_file` to `fp` and write it over `dest`.
+fn encrypt_key_to(gpg_home: &Path, fp: &str, key_file: &Path, dest: &Path) {
+    let _ = fs::remove_file(dest);
+    assert_success(
+        &gpg(
+            gpg_home,
+            &[
+                "--batch",
+                "--trust-model",
+                "always",
+                "-e",
+                "-r",
+                fp,
+                "-o",
+                &dest.to_string_lossy(),
+                &key_file.to_string_lossy(),
+            ],
+        ),
+        "gpg -e attacker key",
+    );
+}
+
+/// The attack that survives every packet/status check: the file really is
+/// public-key encrypted to the victim — just with the attacker's key inside.
+/// Installing it would make the victim encrypt future secrets to a key the
+/// attacker knows. unlock must check the key against real ciphertext first.
+#[test]
+fn unlock_rejects_foreign_key_encrypted_to_victim_public_key() {
+    skip_without_gpg!();
+    let gpg_home = tempfile::tempdir().unwrap();
+    let fp = generate_test_key(gpg_home.path(), "Victim", "victim@gitveil.test");
+    let dir = make_initialized_repo(gpg_home.path());
+    assert_success(
+        &gitveil_gpg(
+            gpg_home.path(),
+            dir.path(),
+            &["add-gpg-user", "--trusted", "victim@gitveil.test"],
+        ),
+        "add-gpg-user",
+    );
+    commit_encrypted_secret(gpg_home.path(), dir.path());
+    assert_success(&gitveil_gpg(gpg_home.path(), dir.path(), &["lock"]), "lock");
+
+    // Attacker (push access, no repo key) swaps in their own key.
+    let (_attacker_repo, attacker_key) = make_attacker_key(gpg_home.path());
+    let planted = version_dir(dir.path(), "default").join(format!("{}.gpg", fp));
+    encrypt_key_to(gpg_home.path(), &fp, &attacker_key, &planted);
+    assert_success(&git(dir.path(), &["add", "--", ".git-crypt"]), "add");
+    assert_success(&git(dir.path(), &["commit", "-m", "swap"]), "commit");
+
+    let out = gitveil_gpg(gpg_home.path(), dir.path(), &["unlock"]);
+    assert_clean_failure(&out, "unlock with foreign key");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("does not decrypt the files in this repository"),
+        "stderr: {stderr}"
+    );
+    assert_no_key_installed(dir.path());
+    // Nothing was deleted or half-checked-out.
+    let status = git(dir.path(), &["status", "--porcelain"]);
+    assert!(
+        String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+        "working tree must be untouched: {}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    assert!(fs::read(dir.path().join("secret.txt"))
+        .unwrap()
+        .starts_with(b"\0GITCRYPT\0"));
+}
+
+/// If one collaborator file the user can decrypt is bad, unlock must move on
+/// to another one rather than abort (or worse, install the bad one).
+#[test]
+fn unlock_falls_back_to_next_collaborator_file_after_foreign_key() {
+    skip_without_gpg!();
+    let gpg_home = tempfile::tempdir().unwrap();
+    let fp_a = generate_test_key(gpg_home.path(), "Victim A", "a@gitveil.test");
+    let _fp_b = generate_test_key(gpg_home.path(), "Victim B", "b@gitveil.test");
+    let dir = make_initialized_repo(gpg_home.path());
+    for id in ["a@gitveil.test", "b@gitveil.test"] {
+        assert_success(
+            &gitveil_gpg(
+                gpg_home.path(),
+                dir.path(),
+                &["add-gpg-user", "--trusted", id],
+            ),
+            "add-gpg-user",
+        );
+    }
+    commit_encrypted_secret(gpg_home.path(), dir.path());
+    let original = fs::read(local_key_path(dir.path())).unwrap();
+    assert_success(&gitveil_gpg(gpg_home.path(), dir.path(), &["lock"]), "lock");
+
+    let (_attacker_repo, attacker_key) = make_attacker_key(gpg_home.path());
+    let planted = version_dir(dir.path(), "default").join(format!("{}.gpg", fp_a));
+    encrypt_key_to(gpg_home.path(), &fp_a, &attacker_key, &planted);
+    assert_success(&git(dir.path(), &["add", "--", ".git-crypt"]), "add");
+    assert_success(&git(dir.path(), &["commit", "-m", "swap A"]), "commit");
+
+    assert_success(
+        &gitveil_gpg(gpg_home.path(), dir.path(), &["unlock"]),
+        "unlock via the intact collaborator file",
+    );
+    assert_eq!(fs::read(local_key_path(dir.path())).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("secret.txt")).unwrap(),
+        "password=hunter2\n"
+    );
+}

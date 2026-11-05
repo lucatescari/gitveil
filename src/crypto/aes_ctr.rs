@@ -50,14 +50,17 @@ pub fn process_stream(
     Ok(())
 }
 
-/// Encrypt or decrypt `data` in place with AES-256-CTR.
-pub fn process_in_place(
-    data: &mut [u8],
-    aes_key: &[u8; AES_KEY_LEN],
-    nonce: &[u8; NONCE_LEN],
-) -> Result<(), GitVeilError> {
-    let mut cipher = new_cipher(aes_key, nonce);
-    apply(&mut cipher, data)
+/// A CTR keystream positioned at block 0, for chunked processing.
+pub struct CtrStream(Aes256Ctr);
+
+impl CtrStream {
+    pub fn new(aes_key: &[u8; AES_KEY_LEN], nonce: &[u8; NONCE_LEN]) -> Self {
+        CtrStream(new_cipher(aes_key, nonce))
+    }
+
+    pub fn apply(&mut self, data: &mut [u8]) -> Result<(), GitVeilError> {
+        apply(&mut self.0, data)
+    }
 }
 
 fn new_cipher(aes_key: &[u8; AES_KEY_LEN], nonce: &[u8; NONCE_LEN]) -> Aes256Ctr {

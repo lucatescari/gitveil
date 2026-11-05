@@ -506,10 +506,13 @@ fn decrypt_with_status(
 
     let mut buf = Zeroizing::new(Vec::new());
     let mut too_large = false;
-    if let Some(stdout) = child.stdout.take() {
-        let read = stdout
-            .take(MAX_DECRYPTED_KEY_LEN as u64 + 1)
-            .read_to_end(&mut buf);
+    if let Some(mut stdout) = child.stdout.take() {
+        // Decrypted key material: read without leaving unzeroized copies.
+        let read = crate::crypto::secure_buf::read_to_end_zeroizing(
+            &mut (&mut stdout).take(MAX_DECRYPTED_KEY_LEN as u64 + 1),
+            u64::MAX,
+        )
+        .map(|b| buf = b);
         if let Err(e) = read {
             let _ = child.kill();
             let _ = child.wait();
@@ -543,8 +546,11 @@ fn decrypt_with_status(
         )));
     }
 
-    let status_text = std::fs::read_to_string(status_path)
+    // Lossy: status lines may carry user IDs in a non-UTF-8 charset; the
+    // keywords and hex fields we check are ASCII either way.
+    let status_bytes = std::fs::read(status_path)
         .map_err(|e| GitVeilError::Gpg(format!("failed to read gpg status output: {}", e)))?;
+    let status_text = String::from_utf8_lossy(&status_bytes);
     verify_decrypt_status(&status_text, expected_fingerprint).map_err(|e| match e {
         GitVeilError::Gpg(msg) => GitVeilError::Gpg(format!("{}: {}", path.display(), msg)),
         other => other,

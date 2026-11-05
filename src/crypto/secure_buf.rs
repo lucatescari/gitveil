@@ -38,8 +38,10 @@ pub fn read_to_end_zeroizing(
         }
 
         if buf.len() + n > buf.capacity() {
+            let cap_limit = usize::try_from(limit).unwrap_or(usize::MAX);
             let new_cap = (buf.capacity().max(INITIAL_CAPACITY))
                 .saturating_mul(2)
+                .min(cap_limit)
                 .max(buf.len() + n);
             let mut grown: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::with_capacity(new_cap));
             grown.extend_from_slice(&buf);
