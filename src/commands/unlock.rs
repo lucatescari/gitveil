@@ -8,7 +8,8 @@ use crate::error::GitVeilError;
 use crate::git::checkout::force_checkout_files;
 use crate::git::config::configure_filters;
 use crate::git::repo::{
-    find_git_dir, find_repo_root, get_encrypted_files, git_crypt_dir, key_path,
+    find_git_dir, find_repo_root, get_encrypted_files, git_crypt_dir, is_tracked_tree_clean,
+    key_path,
 };
 use crate::gpg::operations::{gpg_decrypt_from_file, gpg_list_secret_key_fingerprints};
 use crate::key::key_file::{validate_existing_key_name, KeyFile};
@@ -19,6 +20,18 @@ use crate::key::key_file::{validate_existing_key_name, KeyFile};
 /// Otherwise, attempt GPG-based unlock using keys in .git-crypt/.
 pub fn unlock(key_files: &[PathBuf], quiet: bool) -> Result<(), GitVeilError> {
     let git_dir = find_git_dir()?;
+
+    // The forced checkout below deletes and re-materializes every encrypted
+    // file, which would silently destroy uncommitted edits. Like git-crypt,
+    // refuse unless tracked files are clean (untracked files are safe).
+    // (DirtyWorkingDir's message suggests --force, which unlock lacks.)
+    if !is_tracked_tree_clean()? {
+        return Err(GitVeilError::Other(
+            "Working directory is dirty; commit or stash your changes to tracked \
+             files before running 'gitveil unlock'"
+                .into(),
+        ));
+    }
 
     if !key_files.is_empty() {
         // Symmetric key file unlock
