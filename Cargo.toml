@@ -2,6 +2,10 @@
 name = "gitveil"
 version = "1.3.4"
 edition = "2021"
+# MSRV, set by the dependency floor (aes 0.9). Also guarantees the
+# CVE-2024-24576 Windows argument-escaping fix (Rust >= 1.77.2), since
+# gitveil spawns git and gpg. CI checks this exact version.
+rust-version = "1.89"
 description = "Transparent file encryption in git (git-crypt compatible)"
 license = "GPL-3.0-only"
 repository = "https://github.com/lucatescari/gitveil"
